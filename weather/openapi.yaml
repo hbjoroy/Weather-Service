@@ -1,0 +1,677 @@
+openapi: 3.0.3
+info:
+  title: Weather Service API
+  description: |
+    A comprehensive weather data API providing current weather conditions and forecasts.
+    
+    ## Features
+    - Current weather data for any location
+    - Weather forecasts up to 14 days
+    - Hourly forecast details
+    - Air quality information
+    - Weather alerts
+    - Multiple location input formats (city names, coordinates, IP-based)
+    
+    ## Authentication
+    Currently, no API key validation is required for this service.
+    
+    ## Rate Limiting
+    No rate limiting is currently implemented.
+    
+    ## Data Source
+    Weather data is sourced from WeatherAPI.com
+    
+  version: 1.0.0
+  contact:
+    name: Weather Service API
+    url: https://github.com/your-repo/weather-service
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: http://your-domain.com
+    description: Production server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns the health status of the service
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                service: "weather-api"
+                version: "1.0.0"
+
+  /current:
+    get:
+      summary: Get current weather (GET)
+      description: Retrieve current weather conditions for a specified location using query parameters
+      operationId: getCurrentWeatherGet
+      parameters:
+        - name: location
+          in: query
+          required: true
+          description: |
+            Location query. Can be:
+            - City name: "London", "New York"
+            - City with state/country: "London, UK", "New York, NY"
+            - Coordinates: "37.7749,-122.4194" (latitude,longitude)
+            - IP address: "auto:ip" (for current location)
+          schema:
+            type: string
+          example: "London"
+        - name: include_aqi
+          in: query
+          required: false
+          description: Include air quality data in the response
+          schema:
+            type: boolean
+            default: false
+          example: true
+      responses:
+        '200':
+          description: Current weather data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeatherResponse'
+        '400':
+          description: Bad request - missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error - failed to fetch weather data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      summary: Get current weather (POST)
+      description: Retrieve current weather conditions for a specified location using JSON request body
+      operationId: getCurrentWeatherPost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CurrentWeatherRequest'
+            example:
+              location: "London"
+              include_aqi: true
+      responses:
+        '200':
+          description: Current weather data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeatherResponse'
+        '400':
+          description: Bad request - missing or invalid JSON data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error - failed to fetch weather data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /forecast:
+    get:
+      summary: Get weather forecast
+      description: Retrieve weather forecast for a specified location and number of days
+      operationId: getForecast
+      parameters:
+        - name: location
+          in: query
+          required: true
+          description: |
+            Location query. Can be:
+            - City name: "London", "New York"
+            - City with state/country: "London, UK", "New York, NY"
+            - Coordinates: "37.7749,-122.4194" (latitude,longitude)
+            - IP address: "auto:ip" (for current location)
+          schema:
+            type: string
+          example: "London"
+        - name: days
+          in: query
+          required: true
+          description: Number of forecast days (1-14)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 14
+          example: 5
+        - name: include_aqi
+          in: query
+          required: false
+          description: Include air quality data in the response
+          schema:
+            type: boolean
+            default: false
+          example: true
+        - name: include_alerts
+          in: query
+          required: false
+          description: Include weather alerts in the response
+          schema:
+            type: boolean
+            default: false
+          example: true
+        - name: include_hourly
+          in: query
+          required: false
+          description: Include hourly forecast details for each day
+          schema:
+            type: boolean
+            default: false
+          example: true
+      responses:
+        '200':
+          description: Weather forecast data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastResponse'
+        '400':
+          description: Bad request - missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error - failed to fetch forecast data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "healthy"
+        service:
+          type: string
+          example: "weather-api"
+        version:
+          type: string
+          example: "1.0.0"
+
+    CurrentWeatherRequest:
+      type: object
+      required:
+        - location
+      properties:
+        location:
+          type: string
+          description: Location query (city, coordinates, etc.)
+          example: "London"
+        include_aqi:
+          type: boolean
+          description: Include air quality data
+          default: false
+          example: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              description: Error code
+              example: 400
+            message:
+              type: string
+              description: Error message
+              example: "Missing 'location' parameter"
+            details:
+              type: string
+              description: Additional error details
+              example: "The location parameter is required for all weather requests"
+
+    Location:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Location name
+          example: "London"
+        region:
+          type: string
+          description: Region/state
+          example: "City of London, Greater London"
+        country:
+          type: string
+          description: Country
+          example: "United Kingdom"
+        lat:
+          type: number
+          format: float
+          description: Latitude
+          example: 51.5171
+        lon:
+          type: number
+          format: float
+          description: Longitude
+          example: -0.1062
+        tz_id:
+          type: string
+          description: Timezone ID
+          example: "Europe/London"
+        localtime_epoch:
+          type: integer
+          format: int64
+          description: Local time as epoch timestamp
+          example: 1761481670
+        localtime:
+          type: string
+          description: Local time string
+          example: "2025-10-26 14:27"
+
+    WeatherCondition:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Weather condition description
+          example: "Sunny"
+        icon:
+          type: string
+          description: Weather condition icon URL
+          example: "//cdn.weatherapi.com/weather/64x64/day/113.png"
+        code:
+          type: integer
+          description: Weather condition code
+          example: 1000
+
+    CurrentWeather:
+      type: object
+      properties:
+        last_updated_epoch:
+          type: integer
+          format: int64
+          description: Last update time as epoch timestamp
+          example: 1761480900
+        last_updated:
+          type: string
+          description: Last update time string
+          example: "2025-10-26 14:15"
+        temp_c:
+          type: number
+          format: float
+          description: Temperature in Celsius
+          example: 23.4
+        temp_f:
+          type: number
+          format: float
+          description: Temperature in Fahrenheit
+          example: 74.1
+        is_day:
+          type: integer
+          description: Day/night indicator (1 = day, 0 = night)
+          example: 1
+        condition:
+          $ref: '#/components/schemas/WeatherCondition'
+        wind_mph:
+          type: number
+          format: float
+          description: Wind speed in mph
+          example: 10.5
+        wind_kph:
+          type: number
+          format: float
+          description: Wind speed in kph
+          example: 16.9
+        wind_degree:
+          type: integer
+          description: Wind direction in degrees
+          example: 231
+        wind_dir:
+          type: string
+          description: Wind direction
+          example: "SW"
+        pressure_mb:
+          type: number
+          format: float
+          description: Pressure in millibars
+          example: 1013.0
+        pressure_in:
+          type: number
+          format: float
+          description: Pressure in inches
+          example: 29.91
+        precip_mm:
+          type: number
+          format: float
+          description: Precipitation in mm
+          example: 0.0
+        precip_in:
+          type: number
+          format: float
+          description: Precipitation in inches
+          example: 0.0
+        humidity:
+          type: integer
+          description: Humidity percentage
+          example: 65
+        cloud:
+          type: integer
+          description: Cloud cover percentage
+          example: 0
+        feelslike_c:
+          type: number
+          format: float
+          description: Feels like temperature in Celsius
+          example: 25.2
+        feelslike_f:
+          type: number
+          format: float
+          description: Feels like temperature in Fahrenheit
+          example: 77.4
+        vis_km:
+          type: number
+          format: float
+          description: Visibility in km
+          example: 10.0
+        vis_miles:
+          type: number
+          format: float
+          description: Visibility in miles
+          example: 6.0
+        uv:
+          type: number
+          format: float
+          description: UV index
+          example: 3.2
+        gust_mph:
+          type: number
+          format: float
+          description: Wind gust in mph
+          example: 13.8
+        gust_kph:
+          type: number
+          format: float
+          description: Wind gust in kph
+          example: 22.2
+
+    WeatherResponse:
+      type: object
+      properties:
+        location:
+          $ref: '#/components/schemas/Location'
+        current:
+          $ref: '#/components/schemas/CurrentWeather'
+
+    Astronomy:
+      type: object
+      properties:
+        sunrise:
+          type: string
+          description: Sunrise time
+          example: "07:37 AM"
+        sunset:
+          type: string
+          description: Sunset time
+          example: "06:27 PM"
+        moonrise:
+          type: string
+          description: Moonrise time
+          example: "01:23 AM"
+        moonset:
+          type: string
+          description: Moonset time
+          example: "12:34 PM"
+        moon_phase:
+          type: string
+          description: Moon phase description
+          example: "Waxing Crescent"
+        moon_illumination:
+          type: integer
+          description: Moon illumination percentage
+          example: 17
+
+    ForecastDay:
+      type: object
+      properties:
+        maxtemp_c:
+          type: number
+          format: float
+          description: Maximum temperature in Celsius
+          example: 25.2
+        maxtemp_f:
+          type: number
+          format: float
+          description: Maximum temperature in Fahrenheit
+          example: 77.4
+        mintemp_c:
+          type: number
+          format: float
+          description: Minimum temperature in Celsius
+          example: 18.5
+        mintemp_f:
+          type: number
+          format: float
+          description: Minimum temperature in Fahrenheit
+          example: 65.3
+        avgtemp_c:
+          type: number
+          format: float
+          description: Average temperature in Celsius
+          example: 21.8
+        avgtemp_f:
+          type: number
+          format: float
+          description: Average temperature in Fahrenheit
+          example: 71.2
+        maxwind_mph:
+          type: number
+          format: float
+          description: Maximum wind speed in mph
+          example: 15.4
+        maxwind_kph:
+          type: number
+          format: float
+          description: Maximum wind speed in kph
+          example: 24.8
+        totalprecip_mm:
+          type: number
+          format: float
+          description: Total precipitation in mm
+          example: 2.5
+        totalprecip_in:
+          type: number
+          format: float
+          description: Total precipitation in inches
+          example: 0.10
+        avghumidity:
+          type: integer
+          description: Average humidity percentage
+          example: 72
+        daily_will_it_rain:
+          type: integer
+          description: Will it rain (1 = yes, 0 = no)
+          example: 1
+        daily_chance_of_rain:
+          type: integer
+          description: Chance of rain percentage
+          example: 85
+        uv:
+          type: number
+          format: float
+          description: UV index
+          example: 4.2
+        condition:
+          $ref: '#/components/schemas/WeatherCondition'
+
+    ForecastHour:
+      type: object
+      properties:
+        time_epoch:
+          type: integer
+          format: int64
+          description: Time as epoch timestamp
+          example: 1761480000
+        time:
+          type: string
+          description: Time string
+          example: "2025-10-26 14:00"
+        temp_c:
+          type: number
+          format: float
+          description: Temperature in Celsius
+          example: 22.1
+        temp_f:
+          type: number
+          format: float
+          description: Temperature in Fahrenheit
+          example: 71.8
+        is_day:
+          type: integer
+          description: Day/night indicator (1 = day, 0 = night)
+          example: 1
+        condition:
+          $ref: '#/components/schemas/WeatherCondition'
+        wind_mph:
+          type: number
+          format: float
+          description: Wind speed in mph
+          example: 8.5
+        wind_kph:
+          type: number
+          format: float
+          description: Wind speed in kph
+          example: 13.7
+        wind_degree:
+          type: integer
+          description: Wind direction in degrees
+          example: 231
+        wind_dir:
+          type: string
+          description: Wind direction
+          example: "SW"
+        humidity:
+          type: integer
+          description: Humidity percentage
+          example: 68
+        cloud:
+          type: integer
+          description: Cloud cover percentage
+          example: 25
+        precip_mm:
+          type: number
+          format: float
+          description: Precipitation in mm
+          example: 0.1
+        chance_of_rain:
+          type: integer
+          description: Chance of rain percentage
+          example: 15
+
+    ForecastDaily:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          description: Forecast date
+          example: "2025-10-26"
+        date_epoch:
+          type: integer
+          format: int64
+          description: Forecast date as epoch timestamp
+          example: 1761426000
+        day:
+          $ref: '#/components/schemas/ForecastDay'
+        astro:
+          $ref: '#/components/schemas/Astronomy'
+        hour:
+          type: array
+          description: Hourly forecast data (only included if include_hourly=true)
+          items:
+            $ref: '#/components/schemas/ForecastHour'
+
+    ForecastResponse:
+      type: object
+      properties:
+        location:
+          $ref: '#/components/schemas/Location'
+        forecast:
+          type: object
+          properties:
+            forecastday:
+              type: array
+              description: Array of daily forecasts
+              items:
+                $ref: '#/components/schemas/ForecastDaily'
+
+  examples:
+    LondonCurrentWeather:
+      summary: Current weather for London
+      value:
+        location:
+          name: "London"
+          region: "City of London, Greater London"
+          country: "United Kingdom"
+          lat: 51.5171
+          lon: -0.1062
+          tz_id: "Europe/London"
+          localtime_epoch: 1761481670
+          localtime: "2025-10-26 14:27"
+        current:
+          last_updated_epoch: 1761480900
+          last_updated: "2025-10-26 14:15"
+          temp_c: 10.2
+          temp_f: 50.4
+          is_day: 1
+          condition:
+            text: "Partly cloudy"
+            icon: "//cdn.weatherapi.com/weather/64x64/day/116.png"
+            code: 1003
+          wind_mph: 13.0
+          wind_kph: 20.9
+          wind_degree: 287
+          wind_dir: "WNW"
+          pressure_mb: 1011.0
+          pressure_in: 29.85
+          precip_mm: 0.0
+          precip_in: 0.0
+          humidity: 66
+          cloud: 75
+          feelslike_c: 7.6
+          feelslike_f: 45.6
+          vis_km: 10.0
+          vis_miles: 6.0
+          uv: 1.4
+          gust_mph: 18.3
+          gust_kph: 29.5
+
+tags:
+  - name: Current Weather
+    description: Current weather conditions
+  - name: Forecast
+    description: Weather forecasts
+  - name: Health
+    description: Service health check

@@ -1,0 +1,45 @@
+@baseUrl = http://localhost:8080
+
+### Health Check
+GET {{baseUrl}}/health
+
+###
+
+### Current weather for London (GET with query params)
+GET {{baseUrl}}/current?location=London
+
+###
+
+### Current weather for London with AQI (GET)
+GET {{baseUrl}}/current?location=London&include_aqi=true
+
+###
+
+### Current weather for New York (POST with JSON body)
+POST {{baseUrl}}/current
+Content-Type: application/json
+
+{
+  "location": "New York",
+  "include_aqi": true
+}
+
+###
+
+### 3-day weather forecast for London
+GET {{baseUrl}}/forecast?location=London&days=3
+
+###
+
+### 5-day weather forecast for New York with hourly data
+GET {{baseUrl}}/forecast?location=New%20York&days=5&include_hourly=true
+
+###
+
+### Error test - missing location
+GET {{baseUrl}}/current
+
+###
+
+### Error test - non-existent endpoint
+GET {{baseUrl}}/nonexistent

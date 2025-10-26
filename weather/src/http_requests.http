@@ -1,0 +1,50 @@
+### Health Check
+GET http://localhost:8080/health
+
+### Current weather for London (GET with query params)
+GET http://localhost:8080/current?location=London
+
+### Current weather for London with AQI (GET)
+GET http://localhost:8080/current?location=London&include_aqi=true
+
+### Current weather for New York (POST with JSON body)
+POST http://localhost:8080/current
+Content-Type: application/json
+
+{
+  "location": "New York",
+  "include_aqi": true
+}
+
+### Current weather for Paros (POST with JSON body)
+POST http://localhost:8080/current
+Content-Type: application/json
+
+{
+  "location": "Paros",
+  "include_aqi": false
+}
+
+### 3-day weather forecast for London
+GET http://localhost:8080/forecast?location=London&days=3
+
+### 5-day weather forecast for New York with hourly data
+GET http://localhost:8080/forecast?location=New%20York&days=5&include_hourly=true
+
+### 7-day weather forecast for Tokyo with all options
+GET http://localhost:8080/forecast?location=Tokyo&days=7&include_aqi=true&include_alerts=true&include_hourly=true
+
+### Forecast for Paros (1 day)
+GET http://localhost:8080/forecast?location=Paros&days=1
+
+### Error test - missing location
+GET http://localhost:8080/current
+
+### Error test - missing days parameter
+GET http://localhost:8080/forecast?location=London
+
+### Error test - invalid days (too high)
+GET http://localhost:8080/forecast?location=London&days=20
+
+### Error test - non-existent endpoint
+GET http://localhost:8080/nonexistent
