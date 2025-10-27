@@ -53,6 +53,77 @@ paths:
                 service: "weather-api"
                 version: "1.0.0"
 
+  /slack/events:
+    post:
+      summary: Slack Events API webhook endpoint
+      description: |
+        Handles incoming events from Slack Events API, including URL verification challenges.
+        
+        This endpoint supports:
+        - URL verification challenges (type: url_verification)
+        - Future Slack event types (type: event_callback)
+        
+        For URL verification, the endpoint will respond with the challenge value
+        as required by Slack's verification process.
+      operationId: slackEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/SlackUrlVerification'
+                - $ref: '#/components/schemas/SlackEventCallback'
+            examples:
+              urlVerification:
+                summary: URL Verification Challenge
+                value:
+                  token: "Jhj5dZrVaK7ZwHHjRyZWjbDl"
+                  challenge: "3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P"
+                  type: "url_verification"
+              eventCallback:
+                summary: Event Callback
+                value:
+                  token: "verification_token"
+                  type: "event_callback"
+                  event:
+                    type: "app_mention"
+                    text: "Hello weather bot!"
+      responses:
+        '200':
+          description: Event processed successfully
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SlackChallengeResponse'
+                  - $ref: '#/components/schemas/SlackAckResponse'
+              examples:
+                challengeResponse:
+                  summary: Challenge Response
+                  value:
+                    challenge: "3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P"
+                ackResponse:
+                  summary: Event Acknowledgment
+                  value:
+                    status: "ok"
+        '400':
+          description: Bad request - invalid JSON or missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: "healthy"
+                service: "weather-api"
+                version: "1.0.0"
+
   /current:
     get:
       summary: Get current weather (GET)
@@ -217,6 +288,76 @@ components:
         version:
           type: string
           example: "1.0.0"
+
+    SlackUrlVerification:
+      type: object
+      required:
+        - token
+        - challenge
+        - type
+      properties:
+        token:
+          type: string
+          description: Slack verification token
+          example: "Jhj5dZrVaK7ZwHHjRyZWjbDl"
+        challenge:
+          type: string
+          description: Challenge string to echo back
+          example: "3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P"
+        type:
+          type: string
+          enum:
+            - url_verification
+          description: Event type for URL verification
+          example: "url_verification"
+
+    SlackEventCallback:
+      type: object
+      required:
+        - token
+        - type
+        - event
+      properties:
+        token:
+          type: string
+          description: Slack verification token
+          example: "verification_token"
+        type:
+          type: string
+          enum:
+            - event_callback
+          description: Event type
+          example: "event_callback"
+        event:
+          type: object
+          description: The actual event data
+          properties:
+            type:
+              type: string
+              description: Specific event type
+              example: "app_mention"
+            text:
+              type: string
+              description: Event text content
+              example: "Hello weather bot!"
+
+    SlackChallengeResponse:
+      type: object
+      required:
+        - challenge
+      properties:
+        challenge:
+          type: string
+          description: The challenge value echoed back to Slack
+          example: "3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P"
+
+    SlackAckResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Acknowledgment status
+          example: "ok"
 
     CurrentWeatherRequest:
       type: object

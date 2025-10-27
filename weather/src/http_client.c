@@ -115,6 +115,86 @@ int http_get(const char *url, http_response_t *response) {
     return 0;
 }
 
+int http_post_json(const char *url, const char *json_data, http_response_t *response) {
+    if (!curl_initialized) {
+        fprintf(stderr, "HTTP client not initialized. Call http_client_init() first.\n");
+        return -1;
+    }
+    
+    if (!url || !json_data || !response) {
+        fprintf(stderr, "Invalid arguments to http_post_json\n");
+        return -1;
+    }
+    
+    // Initialize response
+    response->data = malloc(1);
+    response->size = 0;
+    response->status_code = 0;
+    
+    if (!response->data) {
+        fprintf(stderr, "Failed to allocate memory for response\n");
+        return -1;
+    }
+    
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        fprintf(stderr, "Failed to initialize curl handle\n");
+        free(response->data);
+        return -1;
+    }
+    
+    // Set URL
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    
+    // Set POST request
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    
+    // Set JSON data
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data);
+    
+    // Set headers
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    
+    // Set callback function to write received data
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+    
+    // Follow redirects
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    
+    // Set timeout (30 seconds)
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    
+    // Set User-Agent
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Weather-Service/1.0");
+    
+    // Verify SSL certificates
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    
+    // Perform the request
+    CURLcode res = curl_easy_perform(curl);
+    
+    // Clean up headers
+    curl_slist_free_all(headers);
+    
+    if (res != CURLE_OK) {
+        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        curl_easy_cleanup(curl);
+        free(response->data);
+        response->data = NULL;
+        return -1;
+    }
+    
+    // Get HTTP status code
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response->status_code);
+    
+    curl_easy_cleanup(curl);
+    return 0;
+}
+
 void http_response_free(http_response_t *response) {
     if (response && response->data) {
         free(response->data);

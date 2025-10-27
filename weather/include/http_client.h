@@ -23,6 +23,15 @@ void http_client_cleanup(void);
 int http_get(const char *url, http_response_t *response);
 
 /**
+ * Perform an HTTP POST request with JSON data
+ * @param url The URL to request
+ * @param json_data The JSON data to send in the request body
+ * @param response Pointer to store the response (caller must free response->data)
+ * @return 0 on success, -1 on error
+ */
+int http_post_json(const char *url, const char *json_data, http_response_t *response);
+
+/**
  * Free memory allocated for an HTTP response
  * @param response The response to free
  */

@@ -196,6 +196,8 @@ typedef struct {
     int max_connections;        // Maximum concurrent connections
     char bind_address[64];      // IP address to bind to
     int enable_cors;            // Enable CORS headers
+    char slack_bot_token[256];  // Slack Bot OAuth Token
+    char slack_app_id[64];      // Slack App ID (to ignore own messages)
 } server_config_t;
 
 /**

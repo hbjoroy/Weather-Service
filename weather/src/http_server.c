@@ -1,12 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <ctype.h>
 #include <microhttpd.h>
 #include <cjson/cJSON.h>
 #include <signal.h>
 #include <unistd.h>
+#include <curl/curl.h>
 #include "http_server.h"
 #include "weather_api.h"
+#include "http_client.h"
 
 #define MAX_REQUEST_SIZE 8192
 #define MAX_RESPONSE_SIZE 65536
@@ -52,6 +56,120 @@ static void add_cors_headers(struct MHD_Response *response) {
         MHD_add_response_header(response, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         MHD_add_response_header(response, "Access-Control-Allow-Headers", "Content-Type");
     }
+}
+
+/**
+ * Send a message to a Slack channel
+ */
+static int send_slack_message(const char *channel, const char *text) {
+    if (!server_cfg.slack_bot_token[0]) {
+        fprintf(stderr, "Slack bot token not configured\n");
+        return -1;
+    }
+    
+    // Create JSON payload
+    cJSON *payload = cJSON_CreateObject();
+    cJSON_AddStringToObject(payload, "channel", channel);
+    cJSON_AddStringToObject(payload, "text", text);
+    char *json_str = cJSON_Print(payload);
+    cJSON_Delete(payload);
+    
+    if (!json_str) {
+        fprintf(stderr, "Failed to create JSON payload\n");
+        return -1;
+    }
+    
+    // Prepare URL with authorization header
+    char auth_header[512];
+    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", server_cfg.slack_bot_token);
+    
+    if (server_verbose) {
+        printf("Sending Slack message to channel %s: %s\n", channel, text);
+    }
+    
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        fprintf(stderr, "Failed to initialize curl\n");
+        free(json_str);
+        return -1;
+    }
+    
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
+    headers = curl_slist_append(headers, auth_header);
+    
+    curl_easy_setopt(curl, CURLOPT_URL, "https://slack.com/api/chat.postMessage");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    
+    CURLcode res = curl_easy_perform(curl);
+    
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(json_str);
+    
+    if (res != CURLE_OK) {
+        fprintf(stderr, "Failed to send Slack message: %s\n", curl_easy_strerror(res));
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * Check if a string contains "paros" (case insensitive)
+ */
+static int contains_paros(const char *text) {
+    if (!text) return 0;
+    
+    // Create lowercase copy for case-insensitive search
+    size_t len = strlen(text);
+    char *lower = malloc(len + 1);
+    if (!lower) return 0;
+    
+    for (size_t i = 0; i < len; i++) {
+        lower[i] = tolower((unsigned char)text[i]);
+    }
+    lower[len] = '\0';
+    
+    int found = (strstr(lower, "paros") != NULL);
+    free(lower);
+    return found;
+}
+
+/**
+ * Handle Slack message event - check for "paros" and respond with weather
+ */
+static void handle_paros_weather_request(const char *channel) {
+    weather_response_t response;
+    
+    // Fetch weather for Paros, Greece
+    if (weather_api_get_current("Paros, Greece", 0, &response) != 0) {
+        if (server_verbose) {
+            printf("Failed to fetch weather for Paros\n");
+        }
+        send_slack_message(channel, "Beklager, kunne ikkje hente vêrdata for Paros akkurat no.");
+        return;
+    }
+    
+    // Convert wind speed from km/h to m/s (1 km/h = 0.277778 m/s)
+    double wind_ms = response.current.wind_kph * 0.277778;
+    
+    // Format the message in Norwegian
+    char message[512];
+    snprintf(message, sizeof(message),
+             "På Paros er det no %.1f grader og %s, vinden er %.1f m/s, retning %s",
+             response.current.temp_c,
+             response.current.condition.text,
+             wind_ms,
+             response.current.wind_dir);
+    
+    if (server_verbose) {
+        printf("Responding with Paros weather: %s\n", message);
+    }
+    
+    send_slack_message(channel, message);
 }
 
 /**
@@ -424,6 +542,287 @@ static enum MHD_Result handle_health(struct MHD_Connection *connection) {
 }
 
 /**
+ * Handle Slack events endpoint
+ */
+static enum MHD_Result handle_slack_events(struct MHD_Connection *connection, 
+                                          const char *upload_data,
+                                          size_t *upload_data_size) {
+    static char *post_data = NULL;
+    static size_t post_data_size = 0;
+    
+    // Accumulate POST data
+    if (*upload_data_size > 0) {
+        char *new_data = realloc(post_data, post_data_size + *upload_data_size + 1);
+        if (!new_data) {
+            free(post_data);
+            post_data = NULL;
+            post_data_size = 0;
+            
+            cJSON *error = create_error_response(500, "Memory allocation failed", NULL);
+            char *json_str = cJSON_Print(error);
+            cJSON_Delete(error);
+            
+            struct MHD_Response *response = MHD_create_response_from_buffer(
+                strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+            MHD_add_response_header(response, "Content-Type", "application/json");
+            enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, response);
+            MHD_destroy_response(response);
+            return ret;
+        }
+        
+        post_data = new_data;
+        memcpy(post_data + post_data_size, upload_data, *upload_data_size);
+        post_data_size += *upload_data_size;
+        post_data[post_data_size] = '\0';
+        *upload_data_size = 0;
+        return MHD_YES;
+    }
+    
+    // Process the complete request
+    if (post_data == NULL || post_data_size == 0) {
+        cJSON *error = create_error_response(400, "Empty request body", NULL);
+        char *json_str = cJSON_Print(error);
+        cJSON_Delete(error);
+        
+        struct MHD_Response *response = MHD_create_response_from_buffer(
+            strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+        MHD_add_response_header(response, "Content-Type", "application/json");
+        enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
+    
+    if (server_verbose) {
+        printf("POST /slack/events - Body: %s\n", post_data);
+    }
+    
+    // Parse the JSON request
+    cJSON *request = cJSON_Parse(post_data);
+    if (!request) {
+        free(post_data);
+        post_data = NULL;
+        post_data_size = 0;
+        
+        cJSON *error = create_error_response(400, "Invalid JSON", NULL);
+        char *json_str = cJSON_Print(error);
+        cJSON_Delete(error);
+        
+        struct MHD_Response *response = MHD_create_response_from_buffer(
+            strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+        MHD_add_response_header(response, "Content-Type", "application/json");
+        enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
+    
+    // Check for event type
+    cJSON *type_item = cJSON_GetObjectItem(request, "type");
+    if (!type_item || !cJSON_IsString(type_item)) {
+        cJSON_Delete(request);
+        free(post_data);
+        post_data = NULL;
+        post_data_size = 0;
+        
+        cJSON *error = create_error_response(400, "Missing 'type' field", NULL);
+        char *json_str = cJSON_Print(error);
+        cJSON_Delete(error);
+        
+        struct MHD_Response *response = MHD_create_response_from_buffer(
+            strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+        MHD_add_response_header(response, "Content-Type", "application/json");
+        enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
+    
+    const char *event_type = type_item->valuestring;
+    struct MHD_Response *response;
+    enum MHD_Result ret;
+    char *json_str;
+    
+    // Handle URL verification challenge
+    if (strcmp(event_type, "url_verification") == 0) {
+        cJSON *challenge_item = cJSON_GetObjectItem(request, "challenge");
+        if (!challenge_item || !cJSON_IsString(challenge_item)) {
+            cJSON_Delete(request);
+            free(post_data);
+            post_data = NULL;
+            post_data_size = 0;
+            
+            cJSON *error = create_error_response(400, "Missing 'challenge' field", NULL);
+            json_str = cJSON_Print(error);
+            cJSON_Delete(error);
+            
+            response = MHD_create_response_from_buffer(
+                strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+            MHD_add_response_header(response, "Content-Type", "application/json");
+            ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
+            MHD_destroy_response(response);
+            return ret;
+        }
+        
+        const char *challenge = challenge_item->valuestring;
+        
+        if (server_verbose) {
+            printf("Slack URL verification - challenge: %s\n", challenge);
+        }
+        
+        // Create response with just the challenge string
+        cJSON *response_json = cJSON_CreateObject();
+        cJSON_AddStringToObject(response_json, "challenge", challenge);
+        json_str = cJSON_Print(response_json);
+        cJSON_Delete(response_json);
+        
+        response = MHD_create_response_from_buffer(
+            strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+        MHD_add_response_header(response, "Content-Type", "application/json");
+        ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+        MHD_destroy_response(response);
+        
+        cJSON_Delete(request);
+        free(post_data);
+        post_data = NULL;
+        post_data_size = 0;
+        
+        return ret;
+    }
+    
+    // Handle event callbacks (messages, mentions, etc.)
+    if (strcmp(event_type, "event_callback") == 0) {
+        cJSON *event_item = cJSON_GetObjectItem(request, "event");
+        if (event_item && cJSON_IsObject(event_item)) {
+            cJSON *event_type_item = cJSON_GetObjectItem(event_item, "type");
+            cJSON *text_item = cJSON_GetObjectItem(event_item, "text");
+            cJSON *channel_item = cJSON_GetObjectItem(event_item, "channel");
+            cJSON *subtype_item = cJSON_GetObjectItem(event_item, "subtype");
+            cJSON *app_id_item = cJSON_GetObjectItem(event_item, "app_id");
+            
+            // Ignore bot messages to avoid infinite loops
+            if (subtype_item && cJSON_IsString(subtype_item) && 
+                strcmp(subtype_item->valuestring, "bot_message") == 0) {
+                if (server_verbose) {
+                    printf("Ignoring bot_message subtype to avoid loop\n");
+                }
+                
+                cJSON *ack_response = cJSON_CreateObject();
+                cJSON_AddStringToObject(ack_response, "status", "ok");
+                json_str = cJSON_Print(ack_response);
+                cJSON_Delete(ack_response);
+                
+                response = MHD_create_response_from_buffer(
+                    strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+                MHD_add_response_header(response, "Content-Type", "application/json");
+                ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+                MHD_destroy_response(response);
+                
+                cJSON_Delete(request);
+                free(post_data);
+                post_data = NULL;
+                post_data_size = 0;
+                
+                return ret;
+            }
+            
+            // Ignore messages from our own app_id
+            if (app_id_item && cJSON_IsString(app_id_item) && 
+                server_cfg.slack_app_id[0] != '\0') {
+                if (strcmp(app_id_item->valuestring, server_cfg.slack_app_id) == 0) {
+                    if (server_verbose) {
+                        printf("Ignoring message from our own app_id: %s\n", app_id_item->valuestring);
+                    }
+                    
+                    cJSON *ack_response = cJSON_CreateObject();
+                    cJSON_AddStringToObject(ack_response, "status", "ok");
+                    json_str = cJSON_Print(ack_response);
+                    cJSON_Delete(ack_response);
+                    
+                    response = MHD_create_response_from_buffer(
+                        strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+                    MHD_add_response_header(response, "Content-Type", "application/json");
+                    ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+                    MHD_destroy_response(response);
+                    
+                    cJSON_Delete(request);
+                    free(post_data);
+                    post_data = NULL;
+                    post_data_size = 0;
+                    
+                    return ret;
+                }
+            }
+            
+            if (event_type_item && cJSON_IsString(event_type_item) &&
+                text_item && cJSON_IsString(text_item) &&
+                channel_item && cJSON_IsString(channel_item)) {
+                
+                const char *event_subtype = event_type_item->valuestring;
+                const char *message_text = text_item->valuestring;
+                const char *channel = channel_item->valuestring;
+                
+                if (server_verbose) {
+                    printf("Received %s event in channel %s: %s\n", 
+                           event_subtype, channel, message_text);
+                }
+                
+                // Check if message contains "paros"
+                if (contains_paros(message_text)) {
+                    if (server_verbose) {
+                        printf("Message contains 'paros' - fetching weather\n");
+                    }
+                    
+                    // Handle this in a non-blocking way (acknowledge first, then respond)
+                    // For now, we'll do it synchronously but Slack expects quick response
+                    handle_paros_weather_request(channel);
+                }
+            }
+        }
+        
+        // Acknowledge the event
+        cJSON *ack_response = cJSON_CreateObject();
+        cJSON_AddStringToObject(ack_response, "status", "ok");
+        json_str = cJSON_Print(ack_response);
+        cJSON_Delete(ack_response);
+        
+        response = MHD_create_response_from_buffer(
+            strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+        MHD_add_response_header(response, "Content-Type", "application/json");
+        ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+        MHD_destroy_response(response);
+        
+        cJSON_Delete(request);
+        free(post_data);
+        post_data = NULL;
+        post_data_size = 0;
+        
+        return ret;
+    }
+    
+    // Handle other Slack events (to be implemented)
+    if (server_verbose) {
+        printf("Received Slack event type: %s\n", event_type);
+    }
+    
+    // For now, acknowledge other events
+    cJSON *ack_response = cJSON_CreateObject();
+    cJSON_AddStringToObject(ack_response, "status", "ok");
+    json_str = cJSON_Print(ack_response);
+    cJSON_Delete(ack_response);
+    
+    response = MHD_create_response_from_buffer(
+        strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+    MHD_add_response_header(response, "Content-Type", "application/json");
+    ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+    MHD_destroy_response(response);
+    
+    cJSON_Delete(request);
+    free(post_data);
+    post_data = NULL;
+    post_data_size = 0;
+    
+    return ret;
+}
+
+/**
  * Main HTTP request handler
  */
 static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connection,
@@ -451,6 +850,11 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
     // Health check endpoint
     if (strcmp(url, "/health") == 0 && strcmp(method, "GET") == 0) {
         return handle_health(connection);
+    }
+    
+    // Slack events endpoint
+    if (strcmp(url, "/slack/events") == 0 && strcmp(method, "POST") == 0) {
+        return handle_slack_events(connection, upload_data, upload_data_size);
     }
     
     // Current weather endpoints
@@ -573,6 +977,7 @@ int http_server_start(void) {
            server_cfg.port);
     printf("Available endpoints:\n");
     printf("  GET  /health\n");
+    printf("  POST /slack/events (Slack events webhook)\n");
     printf("  GET  /current?location=<location>&include_aqi=<true|false>\n");
     printf("  POST /current (JSON body)\n");
     printf("  GET  /forecast?location=<location>&days=<1-14>&include_aqi=<true|false>&include_alerts=<true|false>&include_hourly=<true|false>\n");

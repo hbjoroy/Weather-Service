@@ -26,6 +26,8 @@ static void print_usage(const char *program_name) {
     printf("  -b, --bind <ADDRESS>    Bind address (default: 0.0.0.0, only with -s)\n");
     printf("  -v, --verbose           Enable verbose logging (only with -s)\n");
     printf("  -C, --cors              Enable CORS headers (only with -s)\n");
+    printf("  -S, --slack <TOKEN>     Slack Bot OAuth Token (only with -s)\n");
+    printf("  -I, --app-id <ID>       Slack App ID to ignore own messages (only with -s)\n");
     printf("  -u, --url <URL>         Base API URL (default: %s)\n", DEFAULT_BASE_URL);
     printf("  -t, --timeout <SEC>     Request timeout in seconds (default: %d)\n", DEFAULT_TIMEOUT);
     printf("  -h, --help              Show this help message\n");
@@ -35,6 +37,17 @@ static void print_usage(const char *program_name) {
     printf("  1. Command line option: -k YOUR_API_KEY\n");
     printf("  2. Environment variable: export WEATHERAPI_KEY=YOUR_API_KEY\n");
     printf("  Command line option takes precedence over environment variable.\n");
+    printf("\n");
+    printf("SLACK BOT TOKEN:\n");
+    printf("  For Slack integration, provide the bot token:\n");
+    printf("  1. Command line option: -S xoxb-your-token\n");
+    printf("  2. Environment variable: export SLACK_BOT_TOKEN=xoxb-your-token\n");
+    printf("\n");
+    printf("SLACK APP ID:\n");
+    printf("  To prevent duplicate messages, provide your Slack App ID:\n");
+    printf("  1. Command line option: -I A01234567\n");
+    printf("  2. Environment variable: export SLACK_APP_ID=A01234567\n");
+    printf("  Find it at: https://api.slack.com/apps -> Your App -> Basic Information\n");
     printf("\n");
     printf("EXAMPLES:\n");
     printf("  # Current weather:\n");
@@ -50,6 +63,11 @@ static void print_usage(const char *program_name) {
     printf("  %s -s                         # Start server on port 8080\n", program_name);
     printf("  %s -s -p 3000 -v              # Start server on port 3000 with verbose logging\n", program_name);
     printf("  %s -s -b 127.0.0.1 -C         # Start server bound to localhost with CORS\n", program_name);
+    printf("\n");
+    printf("  # With Slack integration:\n");
+    printf("  export SLACK_BOT_TOKEN=xoxb-your-token-here\n");
+    printf("  export SLACK_APP_ID=A01234567\n");
+    printf("  %s -s -v                      # Start server with Slack integration\n", program_name);
     printf("\n");
     printf("  # Using environment variable:\n");
     printf("  export WEATHERAPI_KEY=YOUR_API_KEY\n");
@@ -79,6 +97,8 @@ int main(int argc, char *argv[]) {
     char *location = NULL;
     char *base_url = DEFAULT_BASE_URL;
     char *bind_address = "0.0.0.0";
+    char *slack_bot_token = NULL;
+    char *slack_app_id = NULL;
     int include_aqi = 0;
     int include_alerts = 0;
     int show_hourly = 0;
@@ -101,6 +121,8 @@ int main(int argc, char *argv[]) {
         {"bind",     required_argument, 0, 'b'},
         {"verbose",  no_argument,       0, 'v'},
         {"cors",     no_argument,       0, 'C'},
+        {"slack",    required_argument, 0, 'S'},
+        {"app-id",   required_argument, 0, 'I'},
         {"url",      required_argument, 0, 'u'},
         {"timeout",  required_argument, 0, 't'},
         {"help",     no_argument,       0, 'h'},
@@ -110,7 +132,7 @@ int main(int argc, char *argv[]) {
     int option_index = 0;
     int c;
     
-    while ((c = getopt_long(argc, argv, "k:f:HaAsp:b:vCu:t:h", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "k:f:HaAsp:b:vCS:I:u:t:h", long_options, &option_index)) != -1) {
         switch (c) {
             case 'k':
                 api_key = optarg;
@@ -148,6 +170,14 @@ int main(int argc, char *argv[]) {
                 verbose = 1;
                 break;
             case 'C':
+                enable_cors = 1;
+                break;
+            case 'S':
+                slack_bot_token = optarg;
+                break;
+            case 'I':
+                slack_app_id = optarg;
+                break;
                 enable_cors = 1;
                 break;
             case 'u':
@@ -190,6 +220,22 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     
+    // Check for Slack bot token (optional, only used in server mode)
+    if (!slack_bot_token) {
+        slack_bot_token = getenv("SLACK_BOT_TOKEN");
+        if (slack_bot_token && verbose) {
+            printf("Using Slack bot token from SLACK_BOT_TOKEN environment variable\n");
+        }
+    }
+    
+    // Check for Slack app ID (optional, only used in server mode)
+    if (!slack_app_id) {
+        slack_app_id = getenv("SLACK_APP_ID");
+        if (slack_app_id && verbose) {
+            printf("Using Slack app ID from SLACK_APP_ID environment variable\n");
+        }
+    }
+    
     // Server mode validation
     if (server_mode) {
         // In server mode, location is not required
@@ -205,6 +251,10 @@ int main(int argc, char *argv[]) {
         printf("Bind Address: %s\n", bind_address);
         printf("Verbose Logging: %s\n", verbose ? "Yes" : "No");
         printf("CORS Enabled: %s\n", enable_cors ? "Yes" : "No");
+        printf("Slack Integration: %s\n", slack_bot_token ? "Enabled" : "Disabled");
+        if (slack_app_id) {
+            printf("Slack App ID: %s (will ignore own messages)\n", slack_app_id);
+        }
         printf("API Base URL: %s\n", base_url);
         printf("Timeout: %d seconds\n\n", timeout);
         
@@ -223,6 +273,22 @@ int main(int argc, char *argv[]) {
         strncpy(server_config.bind_address, bind_address, sizeof(server_config.bind_address) - 1);
         server_config.bind_address[sizeof(server_config.bind_address) - 1] = '\0';
         server_config.enable_cors = enable_cors;
+        
+        // Set Slack bot token if provided
+        if (slack_bot_token) {
+            strncpy(server_config.slack_bot_token, slack_bot_token, sizeof(server_config.slack_bot_token) - 1);
+            server_config.slack_bot_token[sizeof(server_config.slack_bot_token) - 1] = '\0';
+        } else {
+            server_config.slack_bot_token[0] = '\0';
+        }
+        
+        // Set Slack app ID if provided
+        if (slack_app_id) {
+            strncpy(server_config.slack_app_id, slack_app_id, sizeof(server_config.slack_app_id) - 1);
+            server_config.slack_app_id[sizeof(server_config.slack_app_id) - 1] = '\0';
+        } else {
+            server_config.slack_app_id[0] = '\0';
+        }
         
         // Initialize and start server
         if (http_server_init(&server_config, &weather_config) != 0) {
