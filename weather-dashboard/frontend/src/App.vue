@@ -110,6 +110,7 @@
           v-if="activeTab === 'current'"
           :weather="currentWeather"
           :temperature-unit="profile.tempUnit"
+          :wind-unit="profile.windUnit"
         />
 
         <!-- Forecast Tab -->

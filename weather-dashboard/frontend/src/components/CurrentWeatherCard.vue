@@ -110,11 +110,12 @@
 
 <script setup lang="ts">
 import { Wind, Droplets, Gauge, Eye, Sun, Cloud, CloudRain, Zap } from 'lucide-vue-next'
-import type { WeatherResponse, TemperatureUnit } from '@/types/weather'
+import type { WeatherResponse, TemperatureUnit, WindUnit } from '@/types/weather'
 
 interface Props {
   weather: WeatherResponse
   temperatureUnit: TemperatureUnit
+  windUnit: WindUnit
 }
 
 const props = defineProps<Props>()
@@ -125,9 +126,33 @@ const getTemperature = (celsius: number, fahrenheit: number): string => {
   return Math.round(temp).toString()
 }
 
+const convertWindSpeed = (kph: number): number => {
+  switch (props.windUnit) {
+    case 'knots':
+      return kph * 0.539957 // Convert km/h to knots
+    case 'ms':
+      return kph / 3.6 // Convert km/h to m/s
+    case 'kmh':
+    default:
+      return kph
+  }
+}
+
+const getWindUnitLabel = (): string => {
+  switch (props.windUnit) {
+    case 'knots':
+      return 'knots'
+    case 'ms':
+      return 'm/s'
+    case 'kmh':
+    default:
+      return 'km/h'
+  }
+}
+
 const getWindSpeed = (kph: number, mph: number): string => {
-  const speed = props.temperatureUnit === 'celsius' ? kph : mph
-  const unit = props.temperatureUnit === 'celsius' ? 'km/h' : 'mph'
+  const speed = convertWindSpeed(kph)
+  const unit = getWindUnitLabel()
   return `${Math.round(speed)} ${unit}`
 }
 
