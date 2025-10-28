@@ -91,133 +91,186 @@ interface Props {
 
 const props = defineProps<Props>()
 
-const chartCanvas = ref<HTMLCanvasElement>()
-let chartInstance: Chart | null = null
-const chartError = ref<string | null>(null)
+// ============================================================================
+// CHART STATE
+// ============================================================================
 
-const availableMetrics = computed(() => [
+const chartCanvasElement = ref<HTMLCanvasElement>()
+let chartInstance: Chart | null = null
+const chartCreationError = ref<string | null>(null)
+
+// ============================================================================
+// METRIC VISIBILITY CONTROLS
+// ============================================================================
+
+const chartableMetricsConfig = computed(() => [
   { key: 'temperature', label: 'Temperature', color: '#f59e0b', colorClass: 'bg-amber-500' },
   { 
     key: 'wind', 
-    label: `Wind Speed (${getWindUnitLabel()})`, 
+    label: `Wind Speed (${getSelectedWindUnitLabel()})`, 
     color: '#06b6d4', 
     colorClass: 'bg-cyan-500' 
   },
   { key: 'precipitation', label: 'Precipitation', color: '#3b82f6', colorClass: 'bg-blue-500' }
 ])
 
-const visibleMetrics = ref<Record<string, boolean>>({
+const metricVisibilityFlags = ref<Record<string, boolean>>({
   temperature: true,
   wind: true,
   precipitation: true
 })
 
-const toggleMetric = (metric: string) => {
-  visibleMetrics.value[metric] = !visibleMetrics.value[metric]
-  updateChart()
+const toggleMetricVisibility = (metricKey: string): void => {
+  metricVisibilityFlags.value[metricKey] = !metricVisibilityFlags.value[metricKey]
+  recreateChart()
 }
 
-const getTemperature = (day: ForecastDaily) => {
+// ============================================================================
+// TEMPERATURE DATA EXTRACTION
+// ============================================================================
+
+const extractAverageTemperature = (day: ForecastDaily): number => {
   return props.temperatureUnit === 'celsius' ? day.day.avgtemp_c : day.day.avgtemp_f
 }
 
-const getMaxTemperature = (day: ForecastDaily) => {
+const extractMaximumTemperature = (day: ForecastDaily): number => {
   return props.temperatureUnit === 'celsius' ? day.day.maxtemp_c : day.day.maxtemp_f
 }
 
-const getMinTemperature = (day: ForecastDaily) => {
+const extractMinimumTemperature = (day: ForecastDaily): number => {
   return props.temperatureUnit === 'celsius' ? day.day.mintemp_c : day.day.mintemp_f
 }
 
-const getWindSpeed = (day: ForecastDaily) => {
-  // Calculate daytime average wind speed (6 AM to 6 PM)
-  if (day.hour && day.hour.length > 0) {
-    const daytimeHours = day.hour.filter(hour => {
-      const hourTime = new Date(hour.time).getHours()
-      return hourTime >= 6 && hourTime <= 18
-    })
-    
-    if (daytimeHours.length > 0) {
-      const totalWind = daytimeHours.reduce((sum, hour) => sum + hour.wind_kph, 0)
-      const avgWind = totalWind / daytimeHours.length
-      return convertWindSpeed(avgWind)
+// ============================================================================
+// WIND DATA EXTRACTION AND CALCULATION
+// ============================================================================
+
+const DAYTIME_START_HOUR = 6
+const DAYTIME_END_HOUR = 18
+
+const filterDaytimeHours = (day: ForecastDaily) => {
+  if (!day.hour || day.hour.length === 0) return []
+  
+  return day.hour.filter(hour => {
+    const hourOfDay = new Date(hour.time).getHours()
+    return hourOfDay >= DAYTIME_START_HOUR && hourOfDay <= DAYTIME_END_HOUR
+  })
+}
+
+const calculateAverageWindSpeed = (daytimeHours: any[]): number => {
+  const totalWindKph = daytimeHours.reduce((sum, hour) => sum + hour.wind_kph, 0)
+  return totalWindKph / daytimeHours.length
+}
+
+const extractDayWindSpeed = (day: ForecastDaily): number => {
+  const daytimeHours = filterDaytimeHours(day)
+  
+  if (daytimeHours.length > 0) {
+    const averageKph = calculateAverageWindSpeed(daytimeHours)
+    return convertKphToSelectedWindUnit(averageKph)
+  }
+  
+  // Fallback to maximum wind speed if no hourly data available
+  return convertKphToSelectedWindUnit(day.day.maxwind_kph)
+}
+
+const calculateMostCommonWindDirection = (directionCounts: Record<string, number>): string => {
+  let maxCount = 0
+  let dominantDirection = 'Variable'
+  
+  for (const [direction, count] of Object.entries(directionCounts)) {
+    if (count > maxCount) {
+      maxCount = count
+      dominantDirection = direction
     }
   }
   
-  // Fallback to max wind if hourly data not available
-  const kph = day.day.maxwind_kph
-  return convertWindSpeed(kph)
+  return dominantDirection
 }
 
-const getDominantWindDirection = (day: ForecastDaily) => {
-  // Calculate dominant wind direction during daytime
-  if (day.hour && day.hour.length > 0) {
-    const daytimeHours = day.hour.filter(hour => {
-      const hourTime = new Date(hour.time).getHours()
-      return hourTime >= 6 && hourTime <= 18
-    })
-    
-    if (daytimeHours.length > 0) {
-      // Count occurrences of each wind direction
-      const directionCounts: Record<string, number> = {}
-      daytimeHours.forEach(hour => {
-        if (hour.wind_dir) {
-          directionCounts[hour.wind_dir] = (directionCounts[hour.wind_dir] || 0) + 1
-        }
-      })
-      
-      // Find most common direction
-      let maxCount = 0
-      let dominantDirection = 'Variable'
-      for (const [direction, count] of Object.entries(directionCounts)) {
-        if (count > maxCount) {
-          maxCount = count
-          dominantDirection = direction
-        }
-      }
-      
-      return dominantDirection
-    }
-  }
+const extractDominantWindDirection = (day: ForecastDaily): string => {
+  const daytimeHours = filterDaytimeHours(day)
   
-  return 'Variable'
+  if (daytimeHours.length === 0) return 'Variable'
+  
+  // Count frequency of each wind direction
+  const directionCounts: Record<string, number> = {}
+  daytimeHours.forEach(hour => {
+    if (hour.wind_dir) {
+      directionCounts[hour.wind_dir] = (directionCounts[hour.wind_dir] || 0) + 1
+    }
+  })
+  
+  return calculateMostCommonWindDirection(directionCounts)
 }
 
-const convertWindSpeed = (kph: number) => {
+// ============================================================================
+// WIND UNIT CONVERSION
+// ============================================================================
+
+const KNOTS_PER_KPH = 0.539957
+const METERS_PER_SECOND_PER_KPH = 1 / 3.6
+
+const convertKphToSelectedWindUnit = (kph: number): number => {
   switch (props.windUnit) {
     case 'knots':
-      return kph * 0.539957 // Convert km/h to knots
+      return kph * KNOTS_PER_KPH
     case 'ms':
-      return kph / 3.6 // Convert km/h to m/s
+      return kph * METERS_PER_SECOND_PER_KPH
     case 'kmh':
     default:
       return kph
   }
 }
 
-const getWindUnitLabel = () => {
-  switch (props.windUnit) {
-    case 'knots':
-      return 'knots'
-    case 'ms':
-      return 'm/s'
-    case 'kmh':
-    default:
-      return 'km/h'
+const getSelectedWindUnitLabel = (): string => {
+  const windUnitLabels = {
+    'knots': 'knots',
+    'ms': 'm/s',
+    'kmh': 'km/h'
   }
+  return windUnitLabels[props.windUnit] || 'km/h'
 }
 
-const getPrecipitation = (day: ForecastDaily) => {
+// ============================================================================
+// PRECIPITATION DATA EXTRACTION
+// ============================================================================
+
+const extractPrecipitationAmount = (day: ForecastDaily): number => {
   return day.day.totalprecip_mm
 }
 
-const formatDate = (dateStr: string) => {
+// ============================================================================
+// DATE FORMATTING
+// ============================================================================
+
+const formatDateForChart = (dateStr: string): string => {
   const date = new Date(dateStr)
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-const createChart = () => {
-  chartError.value = null
+// ============================================================================
+// CHART CREATION AND MANAGEMENT
+// ============================================================================
+
+// Legacy function aliases for backwards compatibility with existing createChart logic
+const chartCanvas = chartCanvasElement
+const chartError = chartCreationError
+const visibleMetrics = metricVisibilityFlags
+const availableMetrics = chartableMetricsConfig
+const getTemperature = extractAverageTemperature
+const getMaxTemperature = extractMaximumTemperature
+const getMinTemperature = extractMinimumTemperature
+const getWindSpeed = extractDayWindSpeed
+const getDominantWindDirection = extractDominantWindDirection
+const convertWindSpeed = convertKphToSelectedWindUnit
+const getWindUnitLabel = getSelectedWindUnitLabel
+const getPrecipitation = extractPrecipitationAmount
+const formatDate = formatDateForChart
+const toggleMetric = toggleMetricVisibility
+
+const createChart = (): void => {
+  chartCreationError.value = null
   
   console.log('createChart called with:', {
     hasCanvas: !!chartCanvas.value,
@@ -472,8 +525,8 @@ const createChart = () => {
   }
 }
 
-const updateChart = () => {
-  console.log('updateChart called, destroying existing chart and recreating')
+const recreateChart = (): void => {
+  console.log('recreateChart called, destroying existing chart instance and creating new one')
   if (chartInstance) {
     chartInstance.destroy()
     chartInstance = null
@@ -482,6 +535,9 @@ const updateChart = () => {
     createChart()
   })
 }
+
+// Legacy alias for backwards compatibility
+const updateChart = recreateChart
 
 watch(() => props.forecast, (newForecast, oldForecast) => {
   console.log('Forecast prop changed:', {

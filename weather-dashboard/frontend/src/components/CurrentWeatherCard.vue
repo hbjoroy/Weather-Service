@@ -120,55 +120,72 @@ interface Props {
 
 const props = defineProps<Props>()
 
-// Helper functions
-const getTemperature = (celsius: number, fahrenheit: number): string => {
-  const temp = props.temperatureUnit === 'celsius' ? celsius : fahrenheit
-  return Math.round(temp).toString()
+// ============================================================================
+// TEMPERATURE CONVERSION
+// ============================================================================
+
+const formatTemperatureValue = (celsius: number, fahrenheit: number): string => {
+  const selectedTemp = props.temperatureUnit === 'celsius' ? celsius : fahrenheit
+  return Math.round(selectedTemp).toString()
 }
 
-const convertWindSpeed = (kph: number): number => {
+// ============================================================================
+// WIND SPEED CONVERSION
+// ============================================================================
+
+const convertKphToSelectedUnit = (kph: number): number => {
+  const KNOTS_PER_KPH = 0.539957
+  const METERS_PER_SECOND_PER_KPH = 1 / 3.6
+  
   switch (props.windUnit) {
     case 'knots':
-      return kph * 0.539957 // Convert km/h to knots
+      return kph * KNOTS_PER_KPH
     case 'ms':
-      return kph / 3.6 // Convert km/h to m/s
+      return kph * METERS_PER_SECOND_PER_KPH
     case 'kmh':
     default:
       return kph
   }
 }
 
-const getWindUnitLabel = (): string => {
-  switch (props.windUnit) {
-    case 'knots':
-      return 'knots'
-    case 'ms':
-      return 'm/s'
-    case 'kmh':
-    default:
-      return 'km/h'
+const getSelectedWindUnitLabel = (): string => {
+  const windUnitLabels = {
+    'knots': 'knots',
+    'ms': 'm/s',
+    'kmh': 'km/h'
   }
+  return windUnitLabels[props.windUnit] || 'km/h'
 }
 
-const getWindSpeed = (kph: number, mph: number): string => {
-  const speed = convertWindSpeed(kph)
-  const unit = getWindUnitLabel()
-  return `${Math.round(speed)} ${unit}`
+const formatWindSpeedWithUnit = (kph: number, mph: number): string => {
+  const convertedSpeed = convertKphToSelectedUnit(kph)
+  const unitLabel = getSelectedWindUnitLabel()
+  return `${Math.round(convertedSpeed)} ${unitLabel}`
 }
 
-const getDistance = (km: number, miles: number): string => {
-  const distance = props.temperatureUnit === 'celsius' ? km : miles
-  const unit = props.temperatureUnit === 'celsius' ? 'km' : 'mi'
+// ============================================================================
+// DISTANCE AND PRECIPITATION CONVERSION
+// ============================================================================
+
+const formatDistanceWithUnit = (km: number, miles: number): string => {
+  const useMetric = props.temperatureUnit === 'celsius'
+  const distance = useMetric ? km : miles
+  const unit = useMetric ? 'km' : 'mi'
   return `${Math.round(distance)} ${unit}`
 }
 
-const getPrecipitation = (mm: number, inches: number): string => {
-  const precip = props.temperatureUnit === 'celsius' ? mm : inches
-  const unit = props.temperatureUnit === 'celsius' ? 'mm' : 'in'
-  return `${precip.toFixed(1)} ${unit}`
+const formatPrecipitationWithUnit = (mm: number, inches: number): string => {
+  const useMetric = props.temperatureUnit === 'celsius'
+  const precipitation = useMetric ? mm : inches
+  const unit = useMetric ? 'mm' : 'in'
+  return `${precipitation.toFixed(1)} ${unit}`
 }
 
-const formatLocalTime = (localtime: string): string => {
+// ============================================================================
+// DATE AND TIME FORMATTING
+// ============================================================================
+
+const formatFullLocalTime = (localtime: string): string => {
   return new Date(localtime).toLocaleString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -179,7 +196,7 @@ const formatLocalTime = (localtime: string): string => {
   })
 }
 
-const formatLastUpdated = (lastUpdated: string): string => {
+const formatCompactUpdateTime = (lastUpdated: string): string => {
   return new Date(lastUpdated).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -187,4 +204,15 @@ const formatLastUpdated = (lastUpdated: string): string => {
     minute: '2-digit'
   })
 }
+
+// ============================================================================
+// LEGACY FUNCTION ALIASES (for template compatibility)
+// ============================================================================
+
+const getTemperature = formatTemperatureValue
+const getWindSpeed = formatWindSpeedWithUnit
+const getDistance = formatDistanceWithUnit
+const getPrecipitation = formatPrecipitationWithUnit
+const formatLocalTime = formatFullLocalTime
+const formatLastUpdated = formatCompactUpdateTime
 </script>

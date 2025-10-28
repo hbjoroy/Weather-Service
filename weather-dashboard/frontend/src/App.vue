@@ -18,7 +18,7 @@
               <p class="text-xs text-gray-500">{{ profile.tempUnit === 'celsius' ? 'Celsius' : 'Fahrenheit' }}</p>
             </div>
             <button 
-              @click="showProfileModal = true"
+              @click="isProfileModalVisible = true"
               class="p-2 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
             >
               <Settings class="w-5 h-5 text-gray-600" />
@@ -39,15 +39,15 @@
           <div class="relative">
             <input
               id="location"
-              v-model="currentLocation"
+              v-model="userInputLocation"
               type="text"
               placeholder="Enter city name or coordinates, then click search..."
               class="w-full px-4 py-3 pl-10 pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
             <MapPin class="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
             <button
-              @click="refreshData"
-              :disabled="loading || !currentLocation.trim()"
+              @click="triggerWeatherDataRefresh"
+              :disabled="isLoadingWeatherData || !userInputLocation.trim()"
               class="absolute right-2 top-2 px-3 py-1.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <Search class="w-4 h-4" />
@@ -57,18 +57,18 @@
       </div>
 
       <!-- Loading State -->
-      <div v-if="loading" class="text-center py-12">
+      <div v-if="isLoadingWeatherData" class="text-center py-12">
         <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
         <p class="mt-2 text-gray-600">Loading weather data...</p>
       </div>
 
       <!-- Error State -->
-      <div v-else-if="error" class="text-center py-12">
+      <div v-else-if="weatherLoadError" class="text-center py-12">
         <AlertCircle class="w-12 h-12 text-red-500 mx-auto mb-4" />
         <h3 class="text-lg font-semibold text-gray-900 mb-2">Error Loading Weather Data</h3>
-        <p class="text-gray-600 mb-4">{{ error }}</p>
+        <p class="text-gray-600 mb-4">{{ weatherLoadError }}</p>
         <button 
-          @click="refreshData"
+          @click="triggerWeatherDataRefresh"
           class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
         >
           Try Again
@@ -76,15 +76,15 @@
       </div>
 
       <!-- Weather Content -->
-      <div v-else-if="currentWeather" class="space-y-8">
+      <div v-else-if="currentWeatherData" class="space-y-8">
         <!-- Tabs -->
         <div class="flex justify-center">
           <div class="bg-white rounded-lg p-1 shadow-sm border border-gray-200">
             <button
-              @click="activeTab = 'current'"
+              @click="selectedTab = 'current'"
               :class="[
                 'px-6 py-2 rounded-md font-medium transition-colors',
-                activeTab === 'current' 
+                selectedTab === 'current' 
                   ? 'bg-blue-500 text-white shadow-sm' 
                   : 'text-gray-600 hover:text-gray-900'
               ]"
@@ -92,10 +92,10 @@
               Current Weather
             </button>
             <button
-              @click="activeTab = 'forecast'"
+              @click="selectedTab = 'forecast'"
               :class="[
                 'px-6 py-2 rounded-md font-medium transition-colors',
-                activeTab === 'forecast' 
+                selectedTab === 'forecast' 
                   ? 'bg-blue-500 text-white shadow-sm' 
                   : 'text-gray-600 hover:text-gray-900'
               ]"
@@ -107,31 +107,31 @@
 
         <!-- Current Weather Tab -->
         <CurrentWeatherCard 
-          v-if="activeTab === 'current'"
-          :weather="currentWeather"
+          v-if="selectedTab === 'current'"
+          :weather="currentWeatherData"
           :temperature-unit="profile.tempUnit"
           :wind-unit="profile.windUnit"
         />
 
         <!-- Forecast Tab -->
         <ForecastSection
-          v-show="activeTab === 'forecast'"
-          :location="searchLocation"
+          v-show="selectedTab === 'forecast'"
+          :location="activeSearchLocation"
           :temperature-unit="profile.tempUnit"
           :wind-unit="profile.windUnit"
-          :forecast-params="forecastParams"
-          :refresh-trigger="forecastRefreshTrigger"
-          @update-params="updateForecastParams"
+          :forecast-params="forecastRequestParams"
+          :refresh-trigger="forecastRefreshCounter"
+          @update-params="updateForecastConfiguration"
         />
       </div>
     </main>
 
     <!-- Profile Modal -->
     <ProfileModal
-      v-if="showProfileModal"
+      v-if="isProfileModalVisible"
       :profile="profile"
-      @update="updateProfile"
-      @close="showProfileModal = false"
+      @update="saveUpdatedProfile"
+      @close="isProfileModalVisible = false"
     />
   </div>
 </template>
@@ -145,7 +145,11 @@ import ProfileModal from '@/components/ProfileModal.vue'
 import api from '@/api/client'
 import type { UserProfile, WeatherResponse, ForecastRequest } from '@/types/weather'
 
-// Reactive state
+// ============================================================================
+// STATE MANAGEMENT
+// ============================================================================
+
+// User profile and preferences
 const profile = ref<UserProfile>({
   name: 'Χαράλαμπους Μπιγγ',
   tempUnit: 'celsius',
@@ -153,116 +157,146 @@ const profile = ref<UserProfile>({
   defaultLocation: 'Athens'
 })
 
-const currentLocation = ref('')
-const searchLocation = ref('') // Central state that triggers data loading
-const currentWeather = ref<WeatherResponse | null>(null)
-const activeTab = ref<'current' | 'forecast'>('current')
-const showProfileModal = ref(false)
-const loading = ref(false)
-const error = ref('')
-const forecastRefreshTrigger = ref(0) // Simple trigger for tab switches
+// Location state
+const userInputLocation = ref('')      // What user types in input field
+const activeSearchLocation = ref('')   // Current location being searched/displayed
 
-const forecastParams = ref<Omit<ForecastRequest, 'location'>>({
+// Weather data
+const currentWeatherData = ref<WeatherResponse | null>(null)
+
+// UI state
+const selectedTab = ref<'current' | 'forecast'>('current')
+const isProfileModalVisible = ref(false)
+const isLoadingWeatherData = ref(false)
+const weatherLoadError = ref('')
+const forecastRefreshCounter = ref(0)
+
+// Forecast configuration
+const forecastRequestParams = ref<Omit<ForecastRequest, 'location'>>({
   days: 5,
   include_aqi: false,
   include_alerts: false,
   include_hourly: false
 })
 
-// Methods
-const loadProfile = async () => {
+// ============================================================================
+// PROFILE MANAGEMENT
+// ============================================================================
+
+const fetchUserProfile = async (): Promise<void> => {
   try {
-    const userProfile = await api.getProfile()
-    profile.value = userProfile
-    currentLocation.value = userProfile.defaultLocation
+    const fetchedProfile = await api.getProfile()
+    profile.value = fetchedProfile
+    userInputLocation.value = fetchedProfile.defaultLocation
   } catch (err) {
     console.error('Failed to load profile:', err)
-    // Use default profile if API fails
+    // Continue with default profile if API fails
   }
 }
 
-const updateProfile = async (newProfile: UserProfile) => {
+const saveUpdatedProfile = async (newProfile: UserProfile): Promise<void> => {
   try {
     const updatedProfile = await api.updateProfile(newProfile)
     profile.value = updatedProfile
-    showProfileModal.value = false
+    isProfileModalVisible.value = false
     
-    // Update location but don't auto-refresh
-    if (currentLocation.value !== updatedProfile.defaultLocation) {
-      currentLocation.value = updatedProfile.defaultLocation
-      // Remove automatic refresh - user must click search
+    // Update input field if default location changed
+    if (userInputLocation.value !== updatedProfile.defaultLocation) {
+      userInputLocation.value = updatedProfile.defaultLocation
     }
   } catch (err) {
     console.error('Failed to update profile:', err)
-    error.value = 'Failed to update profile: ' + (err as Error).message
+    weatherLoadError.value = 'Failed to update profile: ' + (err as Error).message
   }
 }
 
-const loadCurrentWeather = async () => {
-  if (!searchLocation.value.trim()) return
+// ============================================================================
+// WEATHER DATA LOADING
+// ============================================================================
+
+const fetchCurrentWeatherForLocation = async (): Promise<void> => {
+  if (!activeSearchLocation.value.trim()) return
   
   try {
-    currentWeather.value = await api.getCurrentWeather(searchLocation.value, forecastParams.value.include_aqi)
+    currentWeatherData.value = await api.getCurrentWeather(
+      activeSearchLocation.value, 
+      forecastRequestParams.value.include_aqi
+    )
   } catch (err) {
     throw new Error('Failed to load current weather: ' + (err as Error).message)
   }
 }
 
-const refreshData = async () => {
-  if (!currentLocation.value.trim()) return
+const triggerWeatherDataRefresh = async (): Promise<void> => {
+  if (!userInputLocation.value.trim()) return
   
-  // Update the central search location - this will trigger data loading in both components
-  searchLocation.value = currentLocation.value.trim()
+  // Update the active search location - this triggers data loading
+  activeSearchLocation.value = userInputLocation.value.trim()
   
-  // Wait a moment for the searchLocation watcher to process, then trigger forecast refresh
+  // Trigger forecast refresh after location update
   await nextTick()
-  forecastRefreshTrigger.value++
+  forecastRefreshCounter.value++
 }
 
-const updateForecastParams = (params: Omit<ForecastRequest, 'location'>) => {
-  forecastParams.value = params
+// ============================================================================
+// FORECAST CONFIGURATION
+// ============================================================================
+
+const updateForecastConfiguration = (params: Omit<ForecastRequest, 'location'>): void => {
+  forecastRequestParams.value = params
 }
 
-// Watch for search location changes - load current weather when location changes
-watch(searchLocation, async (newLocation) => {
+// ============================================================================
+// WATCHERS - Automatic data loading when state changes
+// ============================================================================
+
+// Watch for active search location changes and load current weather
+watch(activeSearchLocation, async (newLocation) => {
   if (!newLocation.trim()) {
-    currentWeather.value = null
+    currentWeatherData.value = null
     return
   }
   
-  loading.value = true
-  error.value = ''
+  isLoadingWeatherData.value = true
+  weatherLoadError.value = ''
   
   try {
-    await loadCurrentWeather()
+    await fetchCurrentWeatherForLocation()
   } catch (err) {
-    error.value = (err as Error).message
-    currentWeather.value = null
+    weatherLoadError.value = (err as Error).message
+    currentWeatherData.value = null
   } finally {
-    loading.value = false
+    isLoadingWeatherData.value = false
   }
 })
 
-// Watch for tab changes - refresh data if switching to a tab with a location
-watch(activeTab, async (newTab: string) => {
-  if (searchLocation.value.trim() && !loading.value) {
-    // When switching tabs, reload data for the active tab
-    if (newTab === 'current' && !currentWeather.value) {
-      await loadCurrentWeather()
-    }
-    // For forecast tab, trigger refresh to ensure data loads when tab becomes visible
-    else if (newTab === 'forecast') {
-      forecastRefreshTrigger.value++
+// Watch for tab changes and refresh data if needed
+watch(selectedTab, async (newTab: string) => {
+  const hasSearchLocation = activeSearchLocation.value.trim()
+  const notCurrentlyLoading = !isLoadingWeatherData.value
+  
+  if (hasSearchLocation && notCurrentlyLoading) {
+    if (newTab === 'current' && !currentWeatherData.value) {
+      await fetchCurrentWeatherForLocation()
+    } else if (newTab === 'forecast') {
+      forecastRefreshCounter.value++
     }
   }
 })
 
-// Lifecycle
+// ============================================================================
+// LIFECYCLE HOOKS
+// ============================================================================
+
 onMounted(async () => {
-  await loadProfile()
-  // Load initial data if we have a default location
-  if (currentLocation.value && currentLocation.value === profile.value.defaultLocation) {
-    searchLocation.value = currentLocation.value // This will trigger data loading
+  await fetchUserProfile()
+  
+  // Load initial weather data if we have a default location
+  const hasDefaultLocation = userInputLocation.value && 
+                             userInputLocation.value === profile.value.defaultLocation
+  
+  if (hasDefaultLocation) {
+    activeSearchLocation.value = userInputLocation.value
   }
 })
 </script>

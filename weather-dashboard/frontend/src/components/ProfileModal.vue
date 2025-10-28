@@ -84,9 +84,28 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const localProfile = ref<UserProfile>({ ...props.profile })
+// ============================================================================
+// STATE - Local copy of profile for editing
+// ============================================================================
 
-const saveProfile = () => {
-  emit('update', localProfile.value)
+const editableProfile = ref<UserProfile>({ ...props.profile })
+
+// ============================================================================
+// ACTIONS
+// ============================================================================
+
+const submitProfileChanges = (): void => {
+  emit('update', editableProfile.value)
 }
+
+const closeModalWithoutSaving = (): void => {
+  emit('close')
+}
+
+// ============================================================================
+// LEGACY ALIASES (for template compatibility)
+// ============================================================================
+
+const localProfile = editableProfile
+const saveProfile = submitProfileChanges
 </script>

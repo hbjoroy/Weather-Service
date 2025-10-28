@@ -122,93 +122,109 @@ const emit = defineEmits<{
   updateParams: [params: Omit<ForecastRequest, 'location'>]
 }>()
 
-const loading = ref(false)
-const error = ref<string | null>(null)
-const forecast = ref<ForecastResponse | null>(null)
+// ============================================================================
+// STATE
+// ============================================================================
 
-const localParams = reactive({ ...props.forecastParams })
+const isLoadingForecast = ref(false)
+const forecastLoadError = ref<string | null>(null)
+const forecastData = ref<ForecastResponse | null>(null)
 
-const updateParams = () => {
-  emit('updateParams', { ...localParams })
+const userSelectedParams = reactive({ ...props.forecastParams })
+
+// ============================================================================
+// PARAMETER UPDATES
+// ============================================================================
+
+const notifyParentOfParamUpdate = (): void => {
+  emit('updateParams', { ...userSelectedParams })
 }
 
-const refreshForecast = async () => {
+// ============================================================================
+// FORECAST DATA LOADING
+// ============================================================================
+
+const fetchForecastData = async (): Promise<void> => {
   if (!props.location.trim()) {
-    error.value = 'Please enter a location'
+    forecastLoadError.value = 'Please enter a location'
     return
   }
 
-  loading.value = true
-  error.value = null
+  isLoadingForecast.value = true
+  forecastLoadError.value = null
 
   try {
     const forecastRequest: ForecastRequest = {
       location: props.location,
-      days: localParams.days,
-      include_aqi: localParams.include_aqi || false,
-      include_alerts: localParams.include_alerts || false,
+      days: userSelectedParams.days,
+      include_aqi: userSelectedParams.include_aqi || false,
+      include_alerts: userSelectedParams.include_alerts || false,
       include_hourly: true // Always include hourly for detailed cards
     }
 
     console.log('Fetching forecast with request:', forecastRequest)
     const response = await api.getForecast(forecastRequest)
     console.log('Received forecast response:', response)
-    forecast.value = response
+    forecastData.value = response
   } catch (err: any) {
     console.error('Failed to fetch forecast:', err)
     
-    // For testing purposes, let's use mock data when API fails
+    // Use mock data when API fails (for testing/demonstration)
     console.log('Using mock data for chart testing...')
-    const mockData = createMockForecastData()
+    const mockData = generateMockForecastData()
     console.log('Created mock forecast data:', mockData)
-    forecast.value = mockData
+    forecastData.value = mockData
     
     if (err.response?.data?.error?.message) {
-      error.value = `${err.response.data.error.message} (Using mock data for demonstration)`
+      forecastLoadError.value = `${err.response.data.error.message} (Using mock data for demonstration)`
     } else if (err.response?.status === 404) {
-      error.value = 'Location not found. Showing sample data for demonstration.'
+      forecastLoadError.value = 'Location not found. Showing sample data for demonstration.'
     } else if (err.response?.status >= 500) {
-      error.value = 'Weather service temporarily unavailable. Showing sample data.'
+      forecastLoadError.value = 'Weather service temporarily unavailable. Showing sample data.'
     } else {
-      error.value = 'Failed to load live data. Showing sample forecast.'
+      forecastLoadError.value = 'Failed to load live data. Showing sample forecast.'
     }
   } finally {
-    loading.value = false
+    isLoadingForecast.value = false
   }
 }
 
-const createMockForecastData = (): ForecastResponse => {
+// ============================================================================
+// MOCK DATA GENERATION (for fallback/testing)
+// ============================================================================
+
+const generateMockForecastData = (): ForecastResponse => {
   const today = new Date()
   const forecastDays = []
   
-  for (let i = 0; i < localParams.days; i++) {
+  for (let i = 0; i < userSelectedParams.days; i++) {
     const date = new Date(today)
     date.setDate(today.getDate() + i)
     
-    const temp_base = 20 + Math.sin(i * 0.5) * 5
-    const wind_base = 15 + Math.random() * 10
-    const precip_base = Math.random() * 5
+    const baseTemperature = 20 + Math.sin(i * 0.5) * 5
+    const baseWindSpeed = 15 + Math.random() * 10
+    const basePrecipitation = Math.random() * 5
     
     forecastDays.push({
       date: date.toISOString().split('T')[0],
       date_epoch: Math.floor(date.getTime() / 1000),
       day: {
-        maxtemp_c: temp_base + 5,
-        maxtemp_f: (temp_base + 5) * 9/5 + 32,
-        mintemp_c: temp_base - 3,
-        mintemp_f: (temp_base - 3) * 9/5 + 32,
-        avgtemp_c: temp_base,
-        avgtemp_f: temp_base * 9/5 + 32,
-        maxwind_mph: wind_base * 0.621371,
-        maxwind_kph: wind_base,
-        totalprecip_mm: precip_base,
-        totalprecip_in: precip_base * 0.0393701,
+        maxtemp_c: baseTemperature + 5,
+        maxtemp_f: (baseTemperature + 5) * 9/5 + 32,
+        mintemp_c: baseTemperature - 3,
+        mintemp_f: (baseTemperature - 3) * 9/5 + 32,
+        avgtemp_c: baseTemperature,
+        avgtemp_f: baseTemperature * 9/5 + 32,
+        maxwind_mph: baseWindSpeed * 0.621371,
+        maxwind_kph: baseWindSpeed,
+        totalprecip_mm: basePrecipitation,
+        totalprecip_in: basePrecipitation * 0.0393701,
         avghumidity: 60 + Math.random() * 20,
-        daily_will_it_rain: precip_base > 1 ? 1 : 0,
-        daily_chance_of_rain: Math.round(precip_base * 20),
+        daily_will_it_rain: basePrecipitation > 1 ? 1 : 0,
+        daily_chance_of_rain: Math.round(basePrecipitation * 20),
         uv: 3 + Math.random() * 5,
         condition: {
-          text: precip_base > 2 ? 'Light rain' : precip_base > 1 ? 'Partly cloudy' : 'Sunny',
+          text: basePrecipitation > 2 ? 'Light rain' : basePrecipitation > 1 ? 'Partly cloudy' : 'Sunny',
           icon: '//cdn.weatherapi.com/weather/64x64/day/116.png',
           code: 1003
         }
@@ -242,10 +258,26 @@ const createMockForecastData = (): ForecastResponse => {
   }
 }
 
+// ============================================================================
+// LEGACY FUNCTION ALIASES (for template compatibility)
+// ============================================================================
+
+const loading = isLoadingForecast
+const error = forecastLoadError
+const forecast = forecastData
+const updateParams = notifyParentOfParamUpdate
+const refreshForecast = fetchForecastData
+const createMockForecastData = generateMockForecastData
+const localParams = userSelectedParams
+
+// ============================================================================
+// WATCHERS
+// ============================================================================
+
 // Watch for refresh trigger (for tab switches and manual refreshes)
 watch(() => props.refreshTrigger, () => {
   if (props.location.trim()) {
-    refreshForecast()
+    fetchForecastData()
   }
 })
 

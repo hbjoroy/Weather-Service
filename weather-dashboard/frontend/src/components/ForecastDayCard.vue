@@ -179,142 +179,194 @@ interface Props {
 
 const props = defineProps<Props>()
 
-const isExpanded = ref(false)
+// ============================================================================
+// UI STATE
+// ============================================================================
 
-const toggleExpanded = () => {
-  isExpanded.value = !isExpanded.value
+const isCardExpanded = ref(false)
+
+const toggleCardExpansion = (): void => {
+  isCardExpanded.value = !isCardExpanded.value
 }
 
-const dayName = computed(() => {
+// ============================================================================
+// DATE FORMATTING
+// ============================================================================
+
+const fullDayName = computed(() => {
   const date = new Date(props.day.date)
   return date.toLocaleDateString('en-US', { weekday: 'long' })
 })
 
-const formattedDate = computed(() => {
+const shortDateDisplay = computed(() => {
   const date = new Date(props.day.date)
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 })
 
-const getHighTemp = () => {
-  return Math.round(props.temperatureUnit === 'celsius' 
+const formatHourDisplay = (timeStr: string): string => {
+  const date = new Date(timeStr)
+  return date.toLocaleTimeString('en-US', { 
+    hour: 'numeric', 
+    hour12: true 
+  })
+}
+
+// ============================================================================
+// TEMPERATURE EXTRACTION
+// ============================================================================
+
+const extractDayHighTemperature = (): number => {
+  const temp = props.temperatureUnit === 'celsius' 
     ? props.day.day.maxtemp_c 
-    : props.day.day.maxtemp_f)
+    : props.day.day.maxtemp_f
+  return Math.round(temp)
 }
 
-const getLowTemp = () => {
-  return Math.round(props.temperatureUnit === 'celsius' 
+const extractDayLowTemperature = (): number => {
+  const temp = props.temperatureUnit === 'celsius' 
     ? props.day.day.mintemp_c 
-    : props.day.day.mintemp_f)
+    : props.day.day.mintemp_f
+  return Math.round(temp)
 }
 
-const getFeelsLike = () => {
-  return Math.round(props.temperatureUnit === 'celsius' 
+const extractFeelsLikeTemperature = (): number => {
+  const temp = props.temperatureUnit === 'celsius' 
     ? props.day.day.avgtemp_c 
-    : props.day.day.avgtemp_f)
+    : props.day.day.avgtemp_f
+  return Math.round(temp)
 }
 
-const getHourlyTemp = (hour: ForecastHour) => {
-  return Math.round(props.temperatureUnit === 'celsius' ? hour.temp_c : hour.temp_f)
+const extractHourlyTemperature = (hour: ForecastHour): number => {
+  const temp = props.temperatureUnit === 'celsius' ? hour.temp_c : hour.temp_f
+  return Math.round(temp)
 }
 
-const convertWindSpeed = (kph: number) => {
+// ============================================================================
+// WIND SPEED CONVERSION AND CALCULATION
+// ============================================================================
+
+const DAYTIME_START_HOUR = 6
+const DAYTIME_END_HOUR = 18
+const KNOTS_PER_KPH = 0.539957
+const METERS_PER_SECOND_PER_KPH = 1 / 3.6
+
+const convertKphToSelectedWindUnit = (kph: number): number => {
   switch (props.windUnit) {
     case 'knots':
-      return kph * 0.539957 // Convert km/h to knots
+      return kph * KNOTS_PER_KPH
     case 'ms':
-      return kph / 3.6 // Convert km/h to m/s
+      return kph * METERS_PER_SECOND_PER_KPH
     case 'kmh':
     default:
       return kph
   }
 }
 
-const getWindUnitLabel = () => {
-  switch (props.windUnit) {
-    case 'knots':
-      return 'knots'
-    case 'ms':
-      return 'm/s'
-    case 'kmh':
-    default:
-      return 'km/h'
+const getSelectedWindUnitLabel = (): string => {
+  const windUnitLabels = {
+    'knots': 'knots',
+    'ms': 'm/s',
+    'kmh': 'km/h'
   }
+  return windUnitLabels[props.windUnit] || 'km/h'
 }
 
-const getDayWindSpeed = () => {
-  // Calculate daytime average wind speed (6 AM to 6 PM)
-  if (props.day.hour && props.day.hour.length > 0) {
-    const daytimeHours = props.day.hour.filter(hour => {
-      const hourTime = new Date(hour.time).getHours()
-      return hourTime >= 6 && hourTime <= 18
-    })
-    
-    if (daytimeHours.length > 0) {
-      const totalWind = daytimeHours.reduce((sum, hour) => sum + hour.wind_kph, 0)
-      const avgWind = totalWind / daytimeHours.length
-      return Math.round(convertWindSpeed(avgWind))
+const filterDaytimeHourData = () => {
+  if (!props.day.hour || props.day.hour.length === 0) return []
+  
+  return props.day.hour.filter(hour => {
+    const hourOfDay = new Date(hour.time).getHours()
+    return hourOfDay >= DAYTIME_START_HOUR && hourOfDay <= DAYTIME_END_HOUR
+  })
+}
+
+const calculateDayAverageWindSpeed = (): number => {
+  const daytimeHours = filterDaytimeHourData()
+  
+  if (daytimeHours.length > 0) {
+    const totalWindKph = daytimeHours.reduce((sum, hour) => sum + hour.wind_kph, 0)
+    const averageWindKph = totalWindKph / daytimeHours.length
+    return Math.round(convertKphToSelectedWindUnit(averageWindKph))
+  }
+  
+  // Fallback to maximum wind speed if no hourly data available
+  return Math.round(convertKphToSelectedWindUnit(props.day.day.maxwind_kph))
+}
+
+const findMostCommonDirection = (directionCounts: Record<string, number>): string => {
+  let maxCount = 0
+  let mostCommonDirection = ''
+  
+  for (const [direction, count] of Object.entries(directionCounts)) {
+    if (count > maxCount) {
+      maxCount = count
+      mostCommonDirection = direction
     }
   }
   
-  // Fallback to max wind if hourly data not available
-  return Math.round(convertWindSpeed(props.day.day.maxwind_kph))
+  return mostCommonDirection || 'Variable'
 }
 
-const getDominantWindDirection = () => {
-  // Calculate dominant wind direction during daytime
-  if (props.day.hour && props.day.hour.length > 0) {
-    const daytimeHours = props.day.hour.filter(hour => {
-      const hourTime = new Date(hour.time).getHours()
-      return hourTime >= 6 && hourTime <= 18
-    })
-    
-    if (daytimeHours.length > 0) {
-      // Count occurrences of each wind direction
-      const directionCounts: Record<string, number> = {}
-      daytimeHours.forEach(hour => {
-        if (hour.wind_dir) {
-          directionCounts[hour.wind_dir] = (directionCounts[hour.wind_dir] || 0) + 1
-        }
-      })
-      
-      // Find most common direction
-      let maxCount = 0
-      let dominantDirection = ''
-      for (const [direction, count] of Object.entries(directionCounts)) {
-        if (count > maxCount) {
-          maxCount = count
-          dominantDirection = direction
-        }
-      }
-      
-      return dominantDirection || 'Variable'
-    }
-  }
+const calculateDominantWindDirection = (): string => {
+  const daytimeHours = filterDaytimeHourData()
   
-  return 'Variable'
+  if (daytimeHours.length === 0) return 'Variable'
+  
+  // Count frequency of each wind direction
+  const directionCounts: Record<string, number> = {}
+  daytimeHours.forEach(hour => {
+    if (hour.wind_dir) {
+      directionCounts[hour.wind_dir] = (directionCounts[hour.wind_dir] || 0) + 1
+    }
+  })
+  
+  return findMostCommonDirection(directionCounts)
 }
 
-const getHourlyWindSpeed = (hour: ForecastHour) => {
-  return Math.round(convertWindSpeed(hour.wind_kph))
+const extractHourlyWindSpeed = (hour: ForecastHour): number => {
+  return Math.round(convertKphToSelectedWindUnit(hour.wind_kph))
 }
 
-const getWeatherIconUrl = (iconPath: string) => {
-  // WeatherAPI.com provides icons with full URLs
+// ============================================================================
+// ICON AND DISPLAY HELPERS
+// ============================================================================
+
+const buildWeatherIconUrl = (iconPath: string): string => {
+  // WeatherAPI.com provides icons with protocol-relative URLs
   return iconPath.startsWith('//') ? `https:${iconPath}` : iconPath
 }
 
-const formatHour = (timeStr: string) => {
-  const date = new Date(timeStr)
-  return date.toLocaleTimeString('en-US', { 
-    hour: 'numeric', 
-    hour12: true 
-  }).replace(' ', '').toLowerCase()
-}
+// ============================================================================
+// LEGACY FUNCTION ALIASES (for template compatibility)
+// ============================================================================
 
-const getHourlyForecast = () => {
+const isExpanded = isCardExpanded
+const toggleExpanded = toggleCardExpansion
+const dayName = fullDayName
+const formattedDate = shortDateDisplay
+const getHighTemp = extractDayHighTemperature
+const getLowTemp = extractDayLowTemperature
+const getFeelsLike = extractFeelsLikeTemperature
+const getHourlyTemp = extractHourlyTemperature
+const convertWindSpeed = convertKphToSelectedWindUnit
+const getWindUnitLabel = getSelectedWindUnitLabel
+const getDayWindSpeed = calculateDayAverageWindSpeed
+const getDominantWindDirection = calculateDominantWindDirection
+const getHourlyWindSpeed = extractHourlyWindSpeed
+const getWeatherIconUrl = buildWeatherIconUrl
+const formatHour = formatHourDisplay
+
+// ============================================================================
+// HOURLY FORECAST FILTERING
+// ============================================================================
+
+const filterHourlyForecastData = () => {
   if (!props.day.hour) return []
   
-  // Show every 3 hours (8 data points for 24 hours)
+  // Show every 3 hours (results in 8 data points for 24 hours)
   return props.day.hour.filter((_, index) => index % 3 === 0)
 }
+
+// Legacy alias
+const getHourlyForecast = filterHourlyForecastData
 </script>
