@@ -350,8 +350,14 @@ const createChart = () => {
     }
 
     // Precipitation dataset (bar)
+    let maxPrecipitation = 20 // Default minimum max value
     if (visibleMetrics.value.precipitation) {
       const precipData = props.forecast.map(getPrecipitation)
+      
+      // Calculate max precipitation value
+      const maxDataPrecip = Math.max(...precipData)
+      // Use at least 20, but expand if data requires it
+      maxPrecipitation = Math.max(20, maxDataPrecip)
       
       datasets.push({
         label: 'Precipitation (mm)',
@@ -450,7 +456,8 @@ const createChart = () => {
             grid: {
               drawOnChartArea: false
             },
-            beginAtZero: true
+            beginAtZero: true,
+            max: maxPrecipitation
           }
         }
       }
