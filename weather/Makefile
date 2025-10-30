@@ -1,35 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g
-LDFLAGS = -lcurl -lcjson -lmicrohttpd # Test target
-test: $(TARGET)
-	@if [ -z "$$WEATHERAPI_KEY" ]; then \
-		echo "Error: WEATHERAPI_KEY environment variable not set"; \
-		echo "Set it with: export WEATHERAPI_KEY=your_api_key"; \
-		exit 1; \
-	fi
-	@echo "Testing weather service with London..."
-	./$(TARGET) "London"
-
-# Test forecast target
-test-forecast: $(TARGET)
-	@if [ -z "$$WEATHERAPI_KEY" ]; then \
-		echo "Error: WEATHERAPI_KEY environment variable not set"; \
-		echo "Set it with: export WEATHERAPI_KEY=your_api_key"; \
-		exit 1; \
-	fi
-	@echo "Testing 3-day forecast for London..."
-	./$(TARGET) -f3 "London"
-
-# Test server mode (background)
-test-server: $(TARGET)
-	@if [ -z "$$WEATHERAPI_KEY" ]; then \
-		echo "Error: WEATHERAPI_KEY environment variable not set"; \
-		echo "Set it with: export WEATHERAPI_KEY=your_api_key"; \
-		exit 1; \
-	fi
-	@echo "Starting weather service in server mode on port 8080..."
-	@echo "Press Ctrl+C to stop the server"
-	./$(TARGET) -s -p 8080tpd
+LDFLAGS = -lcurl -lcjson -lmicrohttpd
 
 # Directories
 SRCDIR = src
@@ -120,4 +91,15 @@ test-forecast: $(TARGET)
 	@echo "Testing 3-day forecast for London..."
 	./$(TARGET) -f3 "London"
 
-.PHONY: all clean deps deps-rpm run debug help test test-forecast
+# Test server mode
+test-server: $(TARGET)
+	@if [ -z "$$WEATHERAPI_KEY" ]; then \
+		echo "Error: WEATHERAPI_KEY environment variable not set"; \
+		echo "Set it with: export WEATHERAPI_KEY=your_api_key"; \
+		exit 1; \
+	fi
+	@echo "Starting weather service in server mode on port 8080..."
+	@echo "Press Ctrl+C to stop the server"
+	./$(TARGET) -s -p 8080
+
+.PHONY: all clean deps deps-rpm run debug help test test-forecast test-server

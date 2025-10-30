@@ -1,0 +1,16 @@
+apiVersion: v2
+name: weather-stack
+description: A Helm chart for Weather Service and Dashboard stack
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - weather
+  - api
+  - dashboard
+  - slack
+maintainers:
+  - name: Weather Service Team
+home: https://github.com/hbjoroy/Weather-Service
+sources:
+  - https://github.com/hbjoroy/Weather-Service

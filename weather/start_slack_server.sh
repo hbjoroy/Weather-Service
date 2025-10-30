@@ -41,4 +41,4 @@ echo "=================================================="
 echo ""
 
 # Run the server in verbose mode (no API key needed for Slack endpoints)
-./build/weather_service -s -p 8080 -v -C
+./build/weather_service -s -p 8090 -v -C

@@ -1,0 +1,217 @@
+# Default values for weather-stack
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global settings
+global:
+  # Image registry to use for all images
+  imageRegistry: ""
+  # Image pull secrets
+  imagePullSecrets: []
+
+# Weather Service API configuration
+weatherService:
+  enabled: true
+  
+  replicaCount: 2
+  
+  image:
+    repository: weather-service
+    pullPolicy: Always
+    tag: "latest"
+  
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+    annotations: {}
+  
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/rate-limit: "100"
+    hosts:
+      - host: weather-api.limani-parou.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: weather-api-tls
+        hosts:
+          - weather-api.limani-parou.com
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Autoscaling configuration
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  
+  # Environment variables
+  env:
+    # WeatherAPI.com API key (required)
+    weatherApiKey: ""
+    # Slack Bot Token (optional)
+    slackBotToken: ""
+    # Slack App ID (optional, prevents duplicate messages)
+    slackAppId: ""
+  
+  # Secrets - alternative to env for sensitive data
+  existingSecret: ""
+  
+  # Liveness and readiness probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity rules
+  affinity: {}
+  
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+
+# Weather Dashboard configuration
+weatherDashboard:
+  enabled: true
+  
+  replicaCount: 2
+  
+  image:
+    repository: weather-dashboard
+    pullPolicy: IfNotPresent
+    tag: "latest"
+  
+  service:
+    type: ClusterIP
+    port: 3001
+    targetPort: 3001
+    annotations: {}
+  
+  ingress:
+    enabled: true
+    className: "nginx"
+    # annotations:
+    #   cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    hosts:
+      - host: weather-dashboard.limani-parou.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: weather-dashboard-tls
+        hosts:
+          - weather-dashboard.limani-parou.com
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  
+  # Autoscaling configuration
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  
+  # Environment variables
+  env:
+    # Weather service URL (will default to ClusterIP service)
+    weatherServiceUrl: "http://weather-service:8080"
+  
+  # Liveness and readiness probes
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 3001
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 3001
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity rules
+  affinity: {}
+  
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+
+# ServiceMonitor for Prometheus (optional)
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s

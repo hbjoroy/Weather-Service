@@ -1,0 +1,41 @@
+{{- if and .Values.weatherService.enabled .Values.weatherService.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "weather-stack.fullname" . }}-service
+  labels:
+    {{- include "weather-service.labels" . | nindent 4 }}
+  {{- with .Values.weatherService.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.weatherService.ingress.className }}
+  ingressClassName: {{ .Values.weatherService.ingress.className }}
+  {{- end }}
+  {{- if .Values.weatherService.ingress.tls }}
+  tls:
+    {{- range .Values.weatherService.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.weatherService.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "weather-stack.fullname" $ }}-service
+                port:
+                  number: {{ $.Values.weatherService.service.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
