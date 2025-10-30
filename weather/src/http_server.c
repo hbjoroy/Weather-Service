@@ -8,6 +8,9 @@
 #include <signal.h>
 #include <unistd.h>
 #include <curl/curl.h>
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
+#include <time.h>
 #include "http_server.h"
 #include "weather_api.h"
 #include "http_client.h"
@@ -542,6 +545,102 @@ static enum MHD_Result handle_health(struct MHD_Connection *connection) {
 }
 
 /**
+ * Verify Slack request signature according to:
+ * https://api.slack.com/authentication/verifying-requests-from-slack
+ */
+static int verify_slack_signature(struct MHD_Connection *connection,
+                                  const char *body,
+                                  size_t body_len) {
+    // Skip verification if signing secret is not configured
+    if (!server_cfg.slack_signing_secret[0]) {
+        if (server_verbose) {
+            fprintf(stderr, "Warning: Slack signing secret not configured - skipping signature verification\n");
+        }
+        return 1; // Accept request but warn
+    }
+    
+    // Get the timestamp from headers
+    const char *timestamp = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Slack-Request-Timestamp");
+    if (!timestamp) {
+        fprintf(stderr, "Missing X-Slack-Request-Timestamp header\n");
+        return 0;
+    }
+    
+    // Get the signature from headers
+    const char *slack_signature = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Slack-Signature");
+    if (!slack_signature || strncmp(slack_signature, "v0=", 3) != 0) {
+        fprintf(stderr, "Missing or invalid X-Slack-Signature header\n");
+        return 0;
+    }
+    
+    // Check timestamp (should be within 5 minutes)
+    time_t now = time(NULL);
+    time_t req_time = (time_t)atol(timestamp);
+    if (abs((int)(now - req_time)) > 300) {
+        fprintf(stderr, "Request timestamp too old or too far in future\n");
+        return 0;
+    }
+    
+    // Create the signature base string: v0:<timestamp>:<body>
+    char sig_basestring[65536];
+    int sig_len = snprintf(sig_basestring, sizeof(sig_basestring), "v0:%s:%.*s", 
+                           timestamp, (int)body_len, body);
+    
+    if (sig_len < 0 || sig_len >= (int)sizeof(sig_basestring)) {
+        fprintf(stderr, "Signature base string too long\n");
+        return 0;
+    }
+    
+    // Compute HMAC-SHA256
+    unsigned char hmac_result[EVP_MAX_MD_SIZE];
+    unsigned int hmac_len = 0;
+    
+    HMAC(EVP_sha256(), 
+         server_cfg.slack_signing_secret, 
+         strlen(server_cfg.slack_signing_secret),
+         (unsigned char*)sig_basestring, 
+         sig_len,
+         hmac_result, 
+         &hmac_len);
+    
+    // Convert to hex string
+    char computed_signature[256] = "v0=";
+    char *hex_ptr = computed_signature + 3;
+    for (unsigned int i = 0; i < hmac_len && hex_ptr < computed_signature + sizeof(computed_signature) - 3; i++) {
+        sprintf(hex_ptr, "%02x", hmac_result[i]);
+        hex_ptr += 2;
+    }
+    *hex_ptr = '\0';
+    
+    // Compare signatures (constant-time comparison to prevent timing attacks)
+    if (strlen(computed_signature) != strlen(slack_signature)) {
+        if (server_verbose) {
+            fprintf(stderr, "Signature length mismatch\n");
+        }
+        return 0;
+    }
+    
+    int result = 1;
+    for (size_t i = 0; i < strlen(computed_signature); i++) {
+        if (computed_signature[i] != slack_signature[i]) {
+            result = 0;
+        }
+    }
+    
+    if (server_verbose && result) {
+        printf("Slack signature verified successfully\n");
+    } else if (!result) {
+        fprintf(stderr, "Slack signature verification failed\n");
+        if (server_verbose) {
+            fprintf(stderr, "Expected: %s\n", computed_signature);
+            fprintf(stderr, "Received: %s\n", slack_signature);
+        }
+    }
+    
+    return result;
+}
+
+/**
  * Handle Slack events endpoint
  */
 static enum MHD_Result handle_slack_events(struct MHD_Connection *connection, 
@@ -588,6 +687,30 @@ static enum MHD_Result handle_slack_events(struct MHD_Connection *connection,
             strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
         MHD_add_response_header(response, "Content-Type", "application/json");
         enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
+    
+    // Verify Slack signature
+    if (!verify_slack_signature(connection, post_data, post_data_size)) {
+        // Log the failed verification attempt
+        fprintf(stderr, "[SECURITY] Slack signature verification failed - request discarded\n");
+        fprintf(stderr, "[SECURITY] Remote IP: %s\n", 
+                MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Forwarded-For") ?: 
+                MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Real-IP") ?: "unknown");
+        
+        free(post_data);
+        post_data = NULL;
+        post_data_size = 0;
+        
+        cJSON *error = create_error_response(401, "Unauthorized", "Invalid request signature");
+        char *json_str = cJSON_Print(error);
+        cJSON_Delete(error);
+        
+        struct MHD_Response *response = MHD_create_response_from_buffer(
+            strlen(json_str), json_str, MHD_RESPMEM_MUST_FREE);
+        MHD_add_response_header(response, "Content-Type", "application/json");
+        enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_UNAUTHORIZED, response);
         MHD_destroy_response(response);
         return ret;
     }

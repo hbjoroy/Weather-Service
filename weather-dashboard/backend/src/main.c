@@ -46,7 +46,15 @@ int main(int argc, char *argv[]) {
     
     strcpy(config.bind_address, "127.0.0.1");
     strcpy(config.static_path, "./static");
-    strcpy(config.weather_service_url, "http://localhost:8080");
+    
+    // Check for WEATHER_SERVICE_URL environment variable
+    const char *weather_url_env = getenv("WEATHER_SERVICE_URL");
+    if (weather_url_env) {
+        strncpy(config.weather_service_url, weather_url_env, sizeof(config.weather_service_url) - 1);
+        config.weather_service_url[sizeof(config.weather_service_url) - 1] = '\0';
+    } else {
+        strcpy(config.weather_service_url, "http://localhost:8080");
+    }
     
     // Command line options
     static struct option long_options[] = {

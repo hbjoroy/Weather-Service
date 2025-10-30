@@ -28,6 +28,7 @@ static void print_usage(const char *program_name) {
     printf("  -C, --cors              Enable CORS headers (only with -s)\n");
     printf("  -S, --slack <TOKEN>     Slack Bot OAuth Token (only with -s)\n");
     printf("  -I, --app-id <ID>       Slack App ID to ignore own messages (only with -s)\n");
+    printf("  -X, --signing-secret <SECRET>  Slack Signing Secret for request verification (only with -s)\n");
     printf("  -u, --url <URL>         Base API URL (default: %s)\n", DEFAULT_BASE_URL);
     printf("  -t, --timeout <SEC>     Request timeout in seconds (default: %d)\n", DEFAULT_TIMEOUT);
     printf("  -h, --help              Show this help message\n");
@@ -49,6 +50,13 @@ static void print_usage(const char *program_name) {
     printf("  2. Environment variable: export SLACK_APP_ID=A01234567\n");
     printf("  Find it at: https://api.slack.com/apps -> Your App -> Basic Information\n");
     printf("\n");
+    printf("SLACK SIGNING SECRET:\n");
+    printf("  For security, verify requests are from Slack using the signing secret:\n");
+    printf("  1. Command line option: -X your_signing_secret\n");
+    printf("  2. Environment variable: export SLACK_SIGNING_SECRET=your_signing_secret\n");
+    printf("  Find it at: https://api.slack.com/apps -> Your App -> Basic Information -> App Credentials\n");
+    printf("  IMPORTANT: Required for production to prevent unauthorized requests!\n");
+    printf("\n");
     printf("EXAMPLES:\n");
     printf("  # Current weather:\n");
     printf("  %s \"London\"\n", program_name);
@@ -66,6 +74,7 @@ static void print_usage(const char *program_name) {
     printf("\n");
     printf("  # With Slack integration:\n");
     printf("  export SLACK_BOT_TOKEN=xoxb-your-token-here\n");
+    printf("  export SLACK_SIGNING_SECRET=your_signing_secret_here\n");
     printf("  export SLACK_APP_ID=A01234567\n");
     printf("  %s -s -v                      # Start server with Slack integration\n", program_name);
     printf("\n");
@@ -99,6 +108,7 @@ int main(int argc, char *argv[]) {
     char *bind_address = "0.0.0.0";
     char *slack_bot_token = NULL;
     char *slack_app_id = NULL;
+    char *slack_signing_secret = NULL;
     int include_aqi = 0;
     int include_alerts = 0;
     int show_hourly = 0;
@@ -123,6 +133,7 @@ int main(int argc, char *argv[]) {
         {"cors",     no_argument,       0, 'C'},
         {"slack",    required_argument, 0, 'S'},
         {"app-id",   required_argument, 0, 'I'},
+        {"signing-secret", required_argument, 0, 'X'},
         {"url",      required_argument, 0, 'u'},
         {"timeout",  required_argument, 0, 't'},
         {"help",     no_argument,       0, 'h'},
@@ -132,7 +143,7 @@ int main(int argc, char *argv[]) {
     int option_index = 0;
     int c;
     
-    while ((c = getopt_long(argc, argv, "k:f:HaAsp:b:vCS:I:u:t:h", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "k:f:HaAsp:b:vCS:I:X:u:t:h", long_options, &option_index)) != -1) {
         switch (c) {
             case 'k':
                 api_key = optarg;
@@ -178,7 +189,8 @@ int main(int argc, char *argv[]) {
             case 'I':
                 slack_app_id = optarg;
                 break;
-                enable_cors = 1;
+            case 'X':
+                slack_signing_secret = optarg;
                 break;
             case 'u':
                 base_url = optarg;
@@ -236,6 +248,14 @@ int main(int argc, char *argv[]) {
         }
     }
     
+    // Check for Slack signing secret (optional, only used in server mode)
+    if (!slack_signing_secret) {
+        slack_signing_secret = getenv("SLACK_SIGNING_SECRET");
+        if (slack_signing_secret && verbose) {
+            printf("Using Slack signing secret from SLACK_SIGNING_SECRET environment variable\n");
+        }
+    }
+    
     // Server mode validation
     if (server_mode) {
         // In server mode, location is not required
@@ -288,6 +308,14 @@ int main(int argc, char *argv[]) {
             server_config.slack_app_id[sizeof(server_config.slack_app_id) - 1] = '\0';
         } else {
             server_config.slack_app_id[0] = '\0';
+        }
+        
+        // Set Slack signing secret if provided
+        if (slack_signing_secret) {
+            strncpy(server_config.slack_signing_secret, slack_signing_secret, sizeof(server_config.slack_signing_secret) - 1);
+            server_config.slack_signing_secret[sizeof(server_config.slack_signing_secret) - 1] = '\0';
+        } else {
+            server_config.slack_signing_secret[0] = '\0';
         }
         
         // Initialize and start server

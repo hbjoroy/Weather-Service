@@ -198,6 +198,7 @@ typedef struct {
     int enable_cors;            // Enable CORS headers
     char slack_bot_token[256];  // Slack Bot OAuth Token
     char slack_app_id[64];      // Slack App ID (to ignore own messages)
+    char slack_signing_secret[256]; // Slack Signing Secret (for request verification)
 } server_config_t;
 
 /**

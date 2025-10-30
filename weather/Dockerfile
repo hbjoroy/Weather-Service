@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     libcjson-dev \
     libmicrohttpd-dev \
+    libssl-dev \
     make \
     && rm -rf /var/lib/apt/lists/*
 
@@ -29,6 +30,7 @@ RUN apt-get update && apt-get install -y \
     libcurl4 \
     libcjson1 \
     libmicrohttpd12 \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

@@ -22,7 +22,7 @@ echo "Platforms: $PLATFORMS"
 echo ""
 
 # Check if buildx is available
-if ! docker buildx version &> /dev/null; then
+if ! sudo docker buildx version &> /dev/null; then
     echo -e "${RED}Error: docker buildx is not available${NC}"
     echo "Install it with: docker buildx install"
     exit 1
@@ -30,13 +30,13 @@ fi
 
 # Create buildx builder if it doesn't exist
 BUILDER_NAME="weather-builder"
-if ! docker buildx inspect $BUILDER_NAME &> /dev/null; then
+if ! sudo docker buildx inspect $BUILDER_NAME &> /dev/null; then
     echo -e "${YELLOW}Creating buildx builder: $BUILDER_NAME${NC}"
-    docker buildx create --name $BUILDER_NAME --driver docker-container --use
-    docker buildx inspect --bootstrap
+    sudo docker buildx create --name $BUILDER_NAME --driver docker-container --use
+    sudo docker buildx inspect --bootstrap
 else
     echo -e "${GREEN}Using existing builder: $BUILDER_NAME${NC}"
-    docker buildx use $BUILDER_NAME
+    sudo docker buildx use $BUILDER_NAME
 fi
 
 # Function to build and push image
@@ -51,7 +51,7 @@ build_image() {
     echo "Dockerfile: $context/$dockerfile"
     echo ""
     
-    docker buildx build \
+    sudo docker buildx build \
         --platform $PLATFORMS \
         --tag $REGISTRY/$image_name:$VERSION \
         --tag $REGISTRY/$image_name:latest \

@@ -6,6 +6,11 @@ This document describes how to integrate the Weather Service with Slack using th
 
 The Weather Service provides a `/slack/events` endpoint that can receive events from Slack. This allows you to build Slack apps that interact with weather data.
 
+**Security:**
+- ✅ Request signature verification using HMAC-SHA256 (following [Slack's verification protocol](https://api.slack.com/authentication/verifying-requests-from-slack))
+- ✅ Timestamp validation (requests older than 5 minutes are rejected)
+- ✅ Constant-time signature comparison to prevent timing attacks
+
 **Current Features:**
 - ✅ URL verification for Slack app setup
 - ✅ Automatic weather responses when "paros" is mentioned in any message
@@ -89,14 +94,18 @@ Once verification is complete, you MUST subscribe to message events for the Paro
 After subscribing to events:
 1. Click "Install App" or "Reinstall App" 
 2. Copy the "Bot User OAuth Token" (starts with `xoxb-`)
-3. Find your App ID in "Basic Information" section (e.g., `A01234567`)
-4. Set both as environment variables or pass them to the server:
+3. Copy the "Signing Secret" from "Basic Information" > "App Credentials"
+4. Find your App ID in "Basic Information" section (e.g., `A01234567`)
+5. Set these as environment variables or pass them to the server:
    ```bash
    export SLACK_BOT_TOKEN=xoxb-your-token-here
+   export SLACK_SIGNING_SECRET=your_signing_secret_here
    export SLACK_APP_ID=A01234567
    ```
 
-**Important:** Setting `SLACK_APP_ID` prevents duplicate messages by ignoring messages that come from your own bot.
+**Important:** 
+- `SLACK_SIGNING_SECRET` is **required** for security - it verifies requests actually come from Slack
+- `SLACK_APP_ID` prevents duplicate messages by ignoring messages that come from your own bot
 
 ### 5. Invite the Bot to Channels
 
@@ -107,25 +116,50 @@ For the bot to see messages:
 
 ## Running the Server with Slack Integration
 
-Start the server with your Slack bot token:
+Start the server with your Slack credentials:
 
 ```bash
 export WEATHERAPI_KEY=your_weatherapi_key
 export SLACK_BOT_TOKEN=xoxb-your-slack-bot-token
+export SLACK_SIGNING_SECRET=your_signing_secret
 export SLACK_APP_ID=A01234567
 ./build/weather_service -s -p 8080 -v
 ```
 
-Or pass the tokens as command-line arguments:
+Or pass the credentials as command-line arguments:
 
 ```bash
-./build/weather_service -s -p 8080 -v -S xoxb-your-slack-bot-token -I A01234567
+./build/weather_service -s -p 8080 -v \
+  -S xoxb-your-slack-bot-token \
+  -X your_signing_secret \
+  -I A01234567
 ```
 
-**Important:** The bot needs these values:
+**Required:**
 - `WEATHERAPI_KEY` - To fetch weather data from WeatherAPI.com
 - `SLACK_BOT_TOKEN` - To send messages back to Slack
-- `SLACK_APP_ID` - (Recommended) To prevent duplicate messages by ignoring own messages
+- `SLACK_SIGNING_SECRET` - **Important for security**: Verifies requests are from Slack
+
+**Recommended:**
+- `SLACK_APP_ID` - Prevents duplicate messages by ignoring own messages
+
+## Request Signature Verification
+
+The service implements [Slack's request verification protocol](https://api.slack.com/authentication/verifying-requests-from-slack) to ensure requests genuinely come from Slack:
+
+1. **Timestamp Validation**: Requests older than 5 minutes are rejected
+2. **HMAC-SHA256 Verification**: Computes signature using your signing secret
+3. **Constant-Time Comparison**: Prevents timing attacks
+
+**If signature verification fails**, the service will:
+- Return HTTP 401 Unauthorized
+- Log an error message (in verbose mode)
+- **Not process the request**
+
+**Without a signing secret configured**, the service will:
+- Log a warning (in verbose mode)  
+- **Still accept requests** (for development/testing)
+- ⚠️ **NOT recommended for production!**
 
 ## Testing Locally with ngrok
 

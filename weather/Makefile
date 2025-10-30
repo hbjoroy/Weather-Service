@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g
-LDFLAGS = -lcurl -lcjson -lmicrohttpd
+LDFLAGS = -lcurl -lcjson -lmicrohttpd -lssl -lcrypto
 
 # Directories
 SRCDIR = src

@@ -179,9 +179,12 @@ Create a `secrets.yaml` file (don't commit this!):
 kubectl create secret generic weather-secrets \
   --from-literal=WEATHERAPI_KEY=your_weatherapi_key \
   --from-literal=SLACK_BOT_TOKEN=xoxb-your-slack-token \
+  --from-literal=SLACK_SIGNING_SECRET=your_slack_signing_secret \
   --from-literal=SLACK_APP_ID=A01234567 \
   -n weather
 ```
+
+**Note:** The `SLACK_SIGNING_SECRET` is **highly recommended for production** to verify that requests to `/slack/events` actually come from Slack.
 
 ### 3. Install with Helm
 
@@ -227,6 +230,7 @@ weatherService:
   env:
     weatherApiKey: "your-api-key"
     slackBotToken: "xoxb-your-token"
+    slackSigningSecret: "your-signing-secret"
     slackAppId: "A01234567"
   
   ingress:
@@ -404,14 +408,105 @@ kubectl port-forward -n monitoring svc/prometheus 9090:9090
 
 ## Upgrading
 
+### Upgrading with New Image Versions
+
+**Important:** Kubernetes won't pull new images if the image tag hasn't changed. Always use a new version tag when deploying updates.
+
 ```bash
-# Upgrade existing deployment
+# Upgrade with new image version
+helm upgrade weather-stack ./helm/weather-stack \
+  --set weatherService.image.tag=1.0.1 \
+  --set weatherDashboard.image.tag=1.0.1 \
+  --namespace weather
+
+# Or with custom values file
 helm upgrade weather-stack ./helm/weather-stack \
   -f custom-values.yaml \
   --namespace weather
+```
 
-# Rollback if needed
+**Note:** If you must use `latest` tags for development, set `imagePullPolicy: Always` in your values to ensure new images are pulled. However, this is **not recommended for production** as it prevents reliable rollbacks and makes it unclear which version is deployed.
+
+### Upgrading Configuration Only
+
+If you're only changing configuration (resources, replicas, etc.) without new images:
+
+```bash
+helm upgrade weather-stack ./helm/weather-stack \
+  -f custom-values.yaml \
+  --namespace weather
+```
+
+### Rollback
+
+```bash
+# Rollback to previous revision
 helm rollback weather-stack -n weather
+
+# Rollback to specific revision
+helm rollback weather-stack 3 -n weather
+
+# View revision history
+helm history weather-stack -n weather
+```
+
+### Updating Secrets
+
+**Important:** If you're using `existingSecret` (recommended for production), secrets are managed outside of Helm and won't be updated during `helm upgrade`.
+
+#### Option 1: Using the Helper Script (Recommended)
+
+```bash
+cd helm
+SLACK_SIGNING_SECRET=your_secret ./add-signing-secret.sh
+```
+
+This script will:
+- Check if the secret exists
+- Add or update the `SLACK_SIGNING_SECRET` value
+- Automatically restart the deployment
+
+#### Option 2: Patch the Existing Secret
+
+To add a new secret value:
+
+```bash
+kubectl patch secret weather-secrets -n weather \
+  --type='json' \
+  -p='[{"op": "add", "path": "/data/SLACK_SIGNING_SECRET", "value": "'$(echo -n "your_signing_secret" | base64)'"}]'
+```
+
+To update an existing secret value:
+
+```bash
+kubectl patch secret weather-secrets -n weather \
+  --type='json' \
+  -p='[{"op": "replace", "path": "/data/SLACK_SIGNING_SECRET", "value": "'$(echo -n "your_new_secret" | base64)'"}]'
+```
+
+After patching, restart the deployment:
+
+```bash
+kubectl rollout restart deployment -n weather weather-stack-service
+```
+
+#### Option 3: Recreate the Secret
+
+**Warning:** This will cause a brief downtime as pods restart.
+
+```bash
+# Delete the old secret
+kubectl delete secret weather-secrets -n weather
+
+# Create a new secret with all values
+kubectl create secret generic weather-secrets \
+  --from-literal=WEATHERAPI_KEY=your_weatherapi_key \
+  --from-literal=SLACK_BOT_TOKEN=xoxb-your-slack-token \
+  --from-literal=SLACK_SIGNING_SECRET=your_slack_signing_secret \
+  --from-literal=SLACK_APP_ID=A01234567 \
+  -n weather
+
+# Pods will automatically restart when the secret is recreated
 ```
 
 ## Uninstalling
