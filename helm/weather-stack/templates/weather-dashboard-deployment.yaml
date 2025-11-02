@@ -33,6 +33,50 @@ spec:
           value: {{ .Values.weatherDashboard.env.weatherServiceUrl | quote }}
         - name: PORT
           value: "{{ .Values.weatherDashboard.service.targetPort }}"
+        {{- if .Values.weatherDashboard.existingDatabaseSecret }}
+        # Database host configuration
+        - name: DATABASE_HOST
+          value: {{ .Values.weatherDashboard.env.databaseHost | quote }}
+        - name: DATABASE_PORT
+          value: {{ .Values.weatherDashboard.env.databasePort | quote }}
+        - name: DATABASE_NAME
+          value: {{ .Values.weatherDashboard.env.databaseName | quote }}
+        - name: DATABASE_SSLMODE
+          value: {{ .Values.weatherDashboard.env.databaseSslMode | quote }}
+        # Database credentials from secret
+        - name: DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.weatherDashboard.existingDatabaseSecret }}
+              key: database-user
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.weatherDashboard.existingDatabaseSecret }}
+              key: database-password
+        {{- else }}
+        # Fallback to default local configuration
+        - name: DATABASE_URL
+          value: "host=localhost port=5432 dbname=bjosoft-weather user=weather password=weather123 sslmode=disable"
+        {{- end }}
+        {{- if .Values.weatherDashboard.existingOidcSecret }}
+        # OIDC Configuration
+        - name: OIDC_ISSUER
+          value: {{ .Values.weatherDashboard.env.oidcIssuer | quote }}
+        - name: OIDC_REDIRECT_URI
+          value: {{ .Values.weatherDashboard.env.oidcRedirectUri | quote }}
+        # OIDC credentials from secret
+        - name: OIDC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.weatherDashboard.existingOidcSecret }}
+              key: client-id
+        - name: OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.weatherDashboard.existingOidcSecret }}
+              key: client-secret
+        {{- end }}
         livenessProbe:
           {{- toYaml .Values.weatherDashboard.livenessProbe | nindent 10 }}
         readinessProbe:

@@ -71,15 +71,17 @@ build_image() {
 build_image "weather" "weather-service"
 
 # Build Weather Dashboard
-# Note: Make sure frontend is built first!
-if [ ! -d "weather-dashboard/backend/static/index.html" ]; then
-    echo -e "${YELLOW}Warning: Frontend static files not found${NC}"
-    echo "Building frontend first..."
-    cd weather-dashboard/frontend
-    npm install
-    npm run build
-    cd ../..
-fi
+# Always rebuild frontend to ensure latest changes
+echo -e "${YELLOW}Building frontend...${NC}"
+cd weather-dashboard/frontend
+npm install
+npm run build
+
+# Copy built frontend to backend/static for Docker image
+echo -e "${YELLOW}Copying frontend dist to backend/static...${NC}"
+rm -rf ../backend/static/*
+cp -r dist/* ../backend/static/
+cd ../..
 
 build_image "weather-dashboard" "weather-dashboard"
 

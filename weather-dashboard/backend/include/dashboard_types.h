@@ -2,10 +2,14 @@
 #define DASHBOARD_TYPES_H
 
 #include <stdbool.h>
+#include <time.h>
 
 #define MAX_NAME_LENGTH 256
 #define MAX_LOCATION_LENGTH 256
 #define MAX_URL_LENGTH 512
+#define MAX_USER_ID_LENGTH 128
+#define MAX_SESSION_ID_LENGTH 64
+#define MAX_USERS 100
 
 // Temperature unit preferences
 typedef enum {
@@ -22,11 +26,22 @@ typedef enum {
 
 // User profile structure
 typedef struct {
+    char user_id[MAX_USER_ID_LENGTH];  // Empty string = default/anonymous user
     char name[MAX_NAME_LENGTH];
     temperature_unit_t temp_unit;
     wind_unit_t wind_unit;
     char default_location[MAX_LOCATION_LENGTH];
+    bool is_authenticated;
 } user_profile_t;
+
+// Session structure
+typedef struct {
+    char session_id[MAX_SESSION_ID_LENGTH];
+    char user_id[MAX_USER_ID_LENGTH];
+    time_t created_at;
+    time_t last_accessed;
+    bool is_active;
+} user_session_t;
 
 // Server configuration
 typedef struct {
@@ -34,6 +49,7 @@ typedef struct {
     char bind_address[64];
     char static_path[256];
     char weather_service_url[MAX_URL_LENGTH];
+    char database_url[MAX_URL_LENGTH];
     bool cors_enabled;
     bool verbose;
 } server_config_t;

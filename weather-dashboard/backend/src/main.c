@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include "http_server.h"
+#include "oidc_client.h"
 
 static volatile int running = 1;
 
@@ -54,6 +55,32 @@ int main(int argc, char *argv[]) {
         config.weather_service_url[sizeof(config.weather_service_url) - 1] = '\0';
     } else {
         strcpy(config.weather_service_url, "http://localhost:8080");
+    }
+    
+    // Check for DATABASE_URL environment variable
+    const char *database_url_env = getenv("DATABASE_URL");
+    if (database_url_env) {
+        strncpy(config.database_url, database_url_env, sizeof(config.database_url) - 1);
+        config.database_url[sizeof(config.database_url) - 1] = '\0';
+    } else {
+        // Try to build from individual components (for Kubernetes secrets)
+        const char *db_host = getenv("DATABASE_HOST");
+        const char *db_port = getenv("DATABASE_PORT");
+        const char *db_name = getenv("DATABASE_NAME");
+        const char *db_user = getenv("DATABASE_USER");
+        const char *db_pass = getenv("DATABASE_PASSWORD");
+        const char *db_ssl = getenv("DATABASE_SSLMODE");
+        
+        if (db_host && db_port && db_name && db_user && db_pass) {
+            // Build connection string from components
+            snprintf(config.database_url, sizeof(config.database_url),
+                    "host=%s port=%s dbname=%s user=%s password=%s sslmode=%s",
+                    db_host, db_port, db_name, db_user, db_pass, 
+                    db_ssl ? db_ssl : "prefer");
+        } else {
+            // Fallback to localhost default
+            strcpy(config.database_url, "host=localhost port=5432 dbname=bjosoft-weather user=weather password=weather123");
+        }
     }
     
     // Command line options
@@ -122,6 +149,23 @@ int main(int argc, char *argv[]) {
     printf("  Default User: Χαράλαμπους Μπιγγ (UTF-8 support enabled)\n");
     printf("\n");
     
+    // Initialize OIDC if configured
+    const char *oidc_issuer = getenv("OIDC_ISSUER");
+    const char *oidc_client_id = getenv("OIDC_CLIENT_ID");
+    const char *oidc_client_secret = getenv("OIDC_CLIENT_SECRET");
+    const char *oidc_redirect_uri = getenv("OIDC_REDIRECT_URI");
+    
+    if (oidc_issuer && oidc_client_id && oidc_client_secret && oidc_redirect_uri) {
+        printf("Initializing OIDC authentication...\n");
+        if (oidc_init(oidc_issuer, oidc_client_id, oidc_client_secret, oidc_redirect_uri)) {
+            printf("OIDC authentication enabled\n\n");
+        } else {
+            fprintf(stderr, "Warning: Failed to initialize OIDC\n\n");
+        }
+    } else {
+        printf("OIDC not configured (using fake login for development)\n\n");
+    }
+    
     // Set up signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -129,6 +173,7 @@ int main(int argc, char *argv[]) {
     // Start the server
     if (http_server_start(&config) != 0) {
         fprintf(stderr, "Failed to start server\n");
+        oidc_cleanup();
         return 1;
     }
     
@@ -137,8 +182,11 @@ int main(int argc, char *argv[]) {
            strcmp(config.bind_address, "0.0.0.0") == 0 ? "localhost" : config.bind_address,
            config.port);
     printf("\nAPI endpoints:\n");
+    printf("  GET  /api/auth/login      - Initiate OIDC login\n");
+    printf("  GET  /api/auth/callback   - OIDC callback handler\n");
     printf("  GET  /api/profile         - Get user profile\n");
     printf("  PUT  /api/profile         - Update user profile\n");
+    printf("  POST /api/logout          - Logout\n");
     printf("  GET  /api/weather/current - Get current weather\n");
     printf("  GET  /api/weather/forecast - Get weather forecast\n");
     printf("\nPress Ctrl+C to stop the server\n\n");
@@ -150,6 +198,7 @@ int main(int argc, char *argv[]) {
     
     // Cleanup
     http_server_stop();
+    oidc_cleanup();
     
     return 0;
 }

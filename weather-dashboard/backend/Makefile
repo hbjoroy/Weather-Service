@@ -3,8 +3,8 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g
-INCLUDES = -Iinclude
-LDFLAGS = -lcurl -lcjson -lmicrohttpd
+INCLUDES = -Iinclude -I/usr/include/postgresql
+LDFLAGS = -lcurl -lcjson -lmicrohttpd -lpq
 
 # Directories
 SRCDIR = src

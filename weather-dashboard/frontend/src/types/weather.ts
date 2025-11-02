@@ -2,10 +2,24 @@ export type TemperatureUnit = 'celsius' | 'fahrenheit'
 export type WindUnit = 'kmh' | 'knots' | 'ms'
 
 export interface UserProfile {
+  userId: string
   name: string
+  isAuthenticated: boolean
   tempUnit: TemperatureUnit
   windUnit: WindUnit
   defaultLocation: string
+}
+
+export interface LoginRequest {
+  userId: string
+  name: string
+}
+
+export interface LoginResponse {
+  success: boolean
+  userId: string
+  name: string
+  sessionId: string
 }
 
 export interface WeatherCondition {

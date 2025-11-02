@@ -18,11 +18,11 @@ weatherService:
   image:
     repository: hbjoroy/weather-service
     pullPolicy: IfNotPresent
-    tag: "1.0.0"
+    tag: "1.0.10"
   
   service:
     type: ClusterIP
-    port: 8080
+    port: 80
     targetPort: 8080
     annotations: {}
   
@@ -121,11 +121,11 @@ weatherDashboard:
   image:
     repository: hbjoroy/weather-dashboard
     pullPolicy: IfNotPresent
-    tag: "1.0.0"
+    tag: "1.0.10"
   
   service:
     type: ClusterIP
-    port: 3001
+    port: 80
     targetPort: 3001
     annotations: {}
   
@@ -164,7 +164,24 @@ weatherDashboard:
   # Environment variables
   env:
     # Weather service URL (will default to ClusterIP service)
-    weatherServiceUrl: "http://weather-stack-service:8080"
+    weatherServiceUrl: "http://weather-stack-service:80"
+    # PostgreSQL database configuration
+    databaseHost: "postgres-postgresql.database.svc.cluster.local"
+    databasePort: "5432"
+    databaseName: "bjosoft-weather"
+    databaseSslMode: "disable" # require or disable
+    # OIDC Configuration (OpenID Connect authentication)
+    oidcIssuer: "https://identity.limani-parou.com/application/o/limani-weather/"  # e.g., "https://identity.limani-parou.com/application/o/limani-weather/"
+    oidcRedirectUri: "https://weather.limani-parou.com/api/auth/callback"  # e.g., "https://weather.limani-parou.com/api/auth/callback"
+  
+  # Database credentials from existing secret
+  # Secret should have keys: database-user and database-password
+  existingDatabaseSecret: "postgres-credentials"
+  
+  # OIDC credentials from existing secret (optional)
+  # Secret should have keys: client-id and client-secret
+  # If not set, OIDC authentication will be disabled
+  existingOidcSecret: "oidc-credentials"
   
   # Liveness and readiness probes
   livenessProbe:

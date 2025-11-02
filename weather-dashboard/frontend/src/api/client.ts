@@ -5,6 +5,8 @@ import type {
   WeatherResponse, 
   ForecastResponse, 
   ForecastRequest,
+  LoginRequest,
+  LoginResponse,
   ErrorResponse 
 } from '@/types/weather'
 
@@ -18,6 +20,7 @@ class WeatherDashboardAPI {
         'Content-Type': 'application/json; charset=utf-8',
       },
       timeout: 30000,
+      withCredentials: true, // Enable cookies for session management
     })
 
     // Response interceptor for error handling
@@ -33,14 +36,39 @@ class WeatherDashboardAPI {
     )
   }
 
+  // Authentication
+  async login(request: LoginRequest, useLegacy: boolean = false): Promise<LoginResponse> {
+    // If legacy login requested, or if we have credentials, use legacy method
+    if (useLegacy || (request.userId && request.name)) {
+      const response = await this.client.post<LoginResponse>('/login', request)
+      return response.data
+    }
+
+    // Try OIDC login (modern method)
+    try {
+      const response = await this.client.get<{ redirectUrl: string }>('/auth/login')
+      // Redirect to the OIDC provider
+      window.location.href = response.data.redirectUrl
+      // Return a pending response (will never actually return as we're redirecting)
+      return { success: true, userId: '', name: '', sessionId: '' }
+    } catch (oidcError) {
+      console.error('OIDC login failed:', oidcError)
+      throw oidcError
+    }
+  }
+
+  async logout(): Promise<void> {
+    await this.client.post('/logout')
+  }
+
   // Profile management
   async getProfile(): Promise<UserProfile> {
     const response = await this.client.get<UserProfile>('/profile')
     return response.data
   }
 
-  async updateProfile(profile: UserProfile): Promise<UserProfile> {
-    const response = await this.client.put<UserProfile>('/profile', profile)
+  async updateProfile(profile: Partial<UserProfile>): Promise<UserProfile> {
+    const response = await this.client.post<UserProfile>('/profile', profile)
     return response.data
   }
 

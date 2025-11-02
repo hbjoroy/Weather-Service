@@ -5,6 +5,7 @@ This guide covers deploying the Weather Service stack to a Kubernetes cluster us
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
+- [Complete Build and Deploy Workflow](#complete-build-and-deploy-workflow)
 - [Docker Images](#docker-images)
 - [Helm Chart](#helm-chart)
 - [Quick Start](#quick-start)
@@ -19,6 +20,78 @@ This guide covers deploying the Weather Service stack to a Kubernetes cluster us
 - kubectl configured to access your cluster
 - Docker for building images
 - Container registry (Docker Hub, GCR, ECR, etc.)
+
+## Complete Build and Deploy Workflow
+
+This is the **recommended workflow** for building, pushing, and deploying new versions:
+
+### 1. Build and Push New Images
+
+```bash
+# Set the version number for your release
+VERSION=1.0.10 ./build-images.sh
+```
+
+This will:
+- Build both weather-service and weather-dashboard
+- Tag them with the specified version AND "latest"
+- Push to your Docker registry (default: hbjoroy on Docker Hub)
+- Build for both linux/amd64 and linux/arm64 platforms
+
+### 2. Deploy to Kubernetes
+
+**Option A: Update values.yaml (recommended for tracking versions)**
+
+Edit `helm/weather-stack/values.yaml` and update the image tags:
+
+```yaml
+weatherService:
+  image:
+    tag: "1.0.10"  # Update this
+
+weatherDashboard:
+  image:
+    tag: "1.0.10"  # Update this
+```
+
+Then upgrade:
+
+```bash
+helm upgrade weather-stack ./helm/weather-stack -n weather
+```
+
+**Option B: Override on command line (quick updates)**
+
+```bash
+helm upgrade weather-stack ./helm/weather-stack -n weather \
+  --set weatherService.image.tag=1.0.10 \
+  --set weatherDashboard.image.tag=1.0.10
+```
+
+### 3. Verify Deployment
+
+```bash
+# Watch pods restart with new version
+kubectl get pods -n weather -w
+
+# Check which image version is running
+kubectl get pods -n weather -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n'
+
+# Check logs
+kubectl logs -n weather -l app=weather-dashboard --tail=50 -f
+```
+
+### Quick Reference
+
+```bash
+# Complete workflow in one go
+VERSION=1.0.11 ./build-images.sh && \
+helm upgrade weather-stack ./helm/weather-stack -n weather \
+  --set weatherService.image.tag=1.0.11 \
+  --set weatherDashboard.image.tag=1.0.11
+```
+
+**Important:** Always ensure the version in your Helm command matches the version you built and pushed. Kubernetes won't automatically detect new images - you must update the tag in the deployment.
 
 ## Docker Images
 

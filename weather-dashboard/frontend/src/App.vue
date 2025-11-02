@@ -131,6 +131,8 @@
       v-if="isProfileModalVisible"
       :profile="profile"
       @update="saveUpdatedProfile"
+      @login="handleUserLogin"
+      @logout="handleUserLogout"
       @close="isProfileModalVisible = false"
     />
   </div>
@@ -151,10 +153,12 @@ import type { UserProfile, WeatherResponse, ForecastRequest } from '@/types/weat
 
 // User profile and preferences
 const profile = ref<UserProfile>({
-  name: 'Χαράλαμπους Μπιγγ',
+  userId: '',
+  name: 'Guest',
+  isAuthenticated: false,
   tempUnit: 'celsius',
   windUnit: 'ms',
-  defaultLocation: 'Athens'
+  defaultLocation: 'Paros'
 })
 
 // Location state
@@ -207,6 +211,30 @@ const saveUpdatedProfile = async (newProfile: UserProfile): Promise<void> => {
   } catch (err) {
     console.error('Failed to update profile:', err)
     weatherLoadError.value = 'Failed to update profile: ' + (err as Error).message
+  }
+}
+
+const handleUserLogin = async (userId: string, name: string, useLegacy: boolean): Promise<void> => {
+  try {
+    await api.login({ userId, name }, useLegacy)
+    // Reload profile after login
+    await fetchUserProfile()
+    isProfileModalVisible.value = false
+  } catch (err) {
+    console.error('Failed to login:', err)
+    weatherLoadError.value = 'Login failed: ' + (err as Error).message
+  }
+}
+
+const handleUserLogout = async (): Promise<void> => {
+  try {
+    await api.logout()
+    // Reload profile to get default profile
+    await fetchUserProfile()
+    isProfileModalVisible.value = false
+  } catch (err) {
+    console.error('Failed to logout:', err)
+    weatherLoadError.value = 'Logout failed: ' + (err as Error).message
   }
 }
 
@@ -289,6 +317,17 @@ watch(selectedTab, async (newTab: string) => {
 // ============================================================================
 
 onMounted(async () => {
+  // Check if we're returning from OIDC callback
+  const urlParams = new URLSearchParams(window.location.search)
+  if (urlParams.has('error')) {
+    const error = urlParams.get('error')
+    console.error('Authentication error:', error)
+    weatherLoadError.value = 'Authentication failed. Please try again.'
+    // Clean URL
+    window.history.replaceState({}, document.title, window.location.pathname)
+  }
+  
+  // Fetch user profile (will have session if OIDC succeeded)
   await fetchUserProfile()
   
   // Load initial weather data if we have a default location
