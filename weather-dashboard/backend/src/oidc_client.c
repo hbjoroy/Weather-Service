@@ -170,18 +170,19 @@ bool oidc_is_configured(void) {
     return initialized;
 }
 
-char* oidc_get_authorization_url(const char *state) {
+char* oidc_get_authorization_url(const char *state, const char *code_challenge) {
     if (!initialized) return NULL;
     
     char *encoded_redirect = url_encode(config.redirect_uri);
     char *encoded_state = url_encode(state);
     
     char *url;
-    asprintf(&url, "%s?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20profile%%20email&state=%s",
+    asprintf(&url, "%s?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20profile%%20email%%20offline_access&state=%s&code_challenge=%s&code_challenge_method=S256",
              config.authorization_endpoint,
              config.client_id,
              encoded_redirect,
-             encoded_state);
+             encoded_state,
+             code_challenge);
     
     free(encoded_redirect);
     free(encoded_state);
@@ -189,7 +190,7 @@ char* oidc_get_authorization_url(const char *state) {
     return url;
 }
 
-oidc_tokens_t* oidc_exchange_code(const char *code) {
+oidc_tokens_t* oidc_exchange_code(const char *code, const char *code_verifier) {
     if (!initialized) return NULL;
     
     CURL *curl = curl_easy_init();
@@ -201,12 +202,14 @@ oidc_tokens_t* oidc_exchange_code(const char *code) {
     char *post_data;
     char *encoded_redirect = url_encode(config.redirect_uri);
     char *encoded_code = url_encode(code);
+    char *encoded_verifier = url_encode(code_verifier);
     
-    asprintf(&post_data, "grant_type=authorization_code&code=%s&redirect_uri=%s&client_id=%s&client_secret=%s",
-             encoded_code, encoded_redirect, config.client_id, config.client_secret);
+    asprintf(&post_data, "grant_type=authorization_code&code=%s&redirect_uri=%s&client_id=%s&client_secret=%s&code_verifier=%s",
+             encoded_code, encoded_redirect, config.client_id, config.client_secret, encoded_verifier);
     
     free(encoded_redirect);
     free(encoded_code);
+    free(encoded_verifier);
     
     curl_easy_setopt(curl, CURLOPT_URL, config.token_endpoint);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
@@ -353,6 +356,80 @@ char* oidc_get_logout_url(const char *id_token_hint, const char *post_logout_red
     }
     
     return url;
+}
+
+oidc_tokens_t* oidc_refresh_token(const char *refresh_token) {
+    if (!initialized || !refresh_token) return NULL;
+    
+    CURL *curl = curl_easy_init();
+    if (!curl) return NULL;
+    
+    struct response_buffer response = {0};
+    
+    // Prepare POST data for token refresh
+    char *post_data;
+    char *encoded_refresh = url_encode(refresh_token);
+    
+    asprintf(&post_data, "grant_type=refresh_token&refresh_token=%s&client_id=%s&client_secret=%s",
+             encoded_refresh, config.client_id, config.client_secret);
+    
+    free(encoded_refresh);
+    
+    curl_easy_setopt(curl, CURLOPT_URL, config.token_endpoint);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    
+    CURLcode res = curl_easy_perform(curl);
+    
+    curl_slist_free_all(headers);
+    free(post_data);
+    curl_easy_cleanup(curl);
+    
+    if (res != CURLE_OK) {
+        free(response.data);
+        return NULL;
+    }
+    
+    // Parse JSON response
+    cJSON *json = cJSON_Parse(response.data);
+    free(response.data);
+    
+    if (!json) return NULL;
+    
+    oidc_tokens_t *tokens = calloc(1, sizeof(oidc_tokens_t));
+    
+    cJSON *item = cJSON_GetObjectItem(json, "access_token");
+    if (item && cJSON_IsString(item)) {
+        tokens->access_token = strdup(item->valuestring);
+    }
+    
+    item = cJSON_GetObjectItem(json, "id_token");
+    if (item && cJSON_IsString(item)) {
+        tokens->id_token = strdup(item->valuestring);
+    }
+    
+    item = cJSON_GetObjectItem(json, "refresh_token");
+    if (item && cJSON_IsString(item)) {
+        tokens->refresh_token = strdup(item->valuestring);
+    }
+    
+    item = cJSON_GetObjectItem(json, "expires_in");
+    if (item && cJSON_IsNumber(item)) {
+        tokens->expires_in = item->valueint;
+    }
+    
+    item = cJSON_GetObjectItem(json, "token_type");
+    if (item && cJSON_IsString(item)) {
+        tokens->token_type = strdup(item->valuestring);
+    }
+    
+    cJSON_Delete(json);
+    return tokens;
 }
 
 void oidc_free_tokens(oidc_tokens_t *tokens) {

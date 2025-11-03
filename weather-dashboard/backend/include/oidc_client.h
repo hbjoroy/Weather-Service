@@ -38,11 +38,14 @@ bool oidc_init(const char *issuer, const char *client_id, const char *client_sec
 // Check if OIDC is initialized and configured
 bool oidc_is_configured(void);
 
-// Get authorization URL for user login
-char* oidc_get_authorization_url(const char *state);
+// Get authorization URL for user login (with PKCE)
+char* oidc_get_authorization_url(const char *state, const char *code_challenge);
 
-// Exchange authorization code for tokens
-oidc_tokens_t* oidc_exchange_code(const char *code);
+// Exchange authorization code for tokens (with PKCE)
+oidc_tokens_t* oidc_exchange_code(const char *code, const char *code_verifier);
+
+// Refresh access token using refresh token
+oidc_tokens_t* oidc_refresh_token(const char *refresh_token);
 
 // Get user info using access token
 oidc_userinfo_t* oidc_get_userinfo(const char *access_token);

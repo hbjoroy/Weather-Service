@@ -1,25 +1,46 @@
+#define _GNU_SOURCE  // For strdup
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <microhttpd.h>
 #include <cjson/cJSON.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
+#include <openssl/sha.h>
+#include <openssl/evp.h>
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
 #include "http_server.h"
 #include "weather_client.h"
 #include "session_manager.h"
 #include "db_manager.h"
 #include "oidc_client.h"
 
-static struct MHD_Daemon *daemon = NULL;
+static struct MHD_Daemon *http_daemon = NULL;
 static server_config_t server_config;
 
-// Store pending OIDC states (simple in-memory for now)
+// Rate limiting configuration
+#define MAX_TRACKED_IPS 1000
+#define RATE_LIMIT_WINDOW 60  // 60 seconds
+#define MAX_REQUESTS_PER_WINDOW 30  // 30 requests per minute
+
+typedef struct {
+    char ip_address[46];  // IPv6 max length
+    time_t window_start;
+    int request_count;
+    int used;
+} rate_limit_entry_t;
+
+static rate_limit_entry_t rate_limits[MAX_TRACKED_IPS] = {0};
+
+// Store pending OIDC states with PKCE verifiers (simple in-memory for now)
 #define MAX_PENDING_STATES 100
 typedef struct {
     char state[65];
+    char code_verifier[129];  // PKCE code_verifier (128 chars + null)
     time_t created;
     int used;
 } pending_state_t;
@@ -30,6 +51,58 @@ struct request_context {
     char *data;
     size_t size;
 };
+
+// Rate limiting check - returns true if allowed, false if rate limited
+static bool check_rate_limit(const char *ip_address) {
+    time_t now = time(NULL);
+    
+    // Find or create entry for this IP
+    int slot = -1;
+    for (int i = 0; i < MAX_TRACKED_IPS; i++) {
+        if (rate_limits[i].used && strcmp(rate_limits[i].ip_address, ip_address) == 0) {
+            slot = i;
+            break;
+        }
+        if (!rate_limits[i].used && slot == -1) {
+            slot = i;
+        }
+    }
+    
+    if (slot == -1) {
+        // No slots available - fail open (allow request)
+        fprintf(stderr, "WARNING: Rate limit table full, allowing request from %s\n", ip_address);
+        return true;
+    }
+    
+    rate_limit_entry_t *entry = &rate_limits[slot];
+    
+    // Initialize new entry
+    if (!entry->used) {
+        strncpy(entry->ip_address, ip_address, 45);
+        entry->ip_address[45] = '\0';
+        entry->window_start = now;
+        entry->request_count = 1;
+        entry->used = 1;
+        return true;
+    }
+    
+    // Check if window expired - reset counter
+    if (now - entry->window_start >= RATE_LIMIT_WINDOW) {
+        entry->window_start = now;
+        entry->request_count = 1;
+        return true;
+    }
+    
+    // Increment counter and check limit
+    entry->request_count++;
+    if (entry->request_count > MAX_REQUESTS_PER_WINDOW) {
+        fprintf(stderr, "RATE LIMIT: Blocked %s (%d requests in %ld seconds)\n", 
+                ip_address, entry->request_count, now - entry->window_start);
+        return false;
+    }
+    
+    return true;
+}
 
 // MIME type mapping
 static const char* get_mime_type(const char *path) {
@@ -48,10 +121,66 @@ static const char* get_mime_type(const char *path) {
     return "application/octet-stream";
 }
 
+// Base64 URL-safe encoding (for PKCE)
+static char* base64url_encode(const unsigned char *input, size_t length) {
+    BIO *bio, *b64;
+    BUF_MEM *buffer_ptr;
+    
+    b64 = BIO_new(BIO_f_base64());
+    bio = BIO_new(BIO_s_mem());
+    bio = BIO_push(b64, bio);
+    
+    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
+    BIO_write(bio, input, length);
+    BIO_flush(bio);
+    BIO_get_mem_ptr(bio, &buffer_ptr);
+    
+    // Save length before freeing BIO
+    size_t result_length = buffer_ptr->length;
+    char *result = malloc(result_length + 1);
+    memcpy(result, buffer_ptr->data, result_length);
+    result[result_length] = '\0';
+    
+    BIO_free_all(bio);
+    
+    // Convert to URL-safe (replace + with -, / with _, remove =)
+    for (size_t i = 0; i < result_length; i++) {
+        if (result[i] == '+') result[i] = '-';
+        else if (result[i] == '/') result[i] = '_';
+        else if (result[i] == '=') { result[i] = '\0'; break; }
+    }
+    
+    return result;
+}
+
+// Generate PKCE code_verifier (128 random characters)
+static void generate_code_verifier(char *verifier, size_t len) {
+    static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    static unsigned int seed = 0;
+    
+    if (seed == 0) {
+        seed = (unsigned int)time(NULL) ^ (unsigned int)getpid();
+        srand(seed);
+    }
+    
+    for (size_t i = 0; i < len - 1; i++) {
+        verifier[i] = charset[rand() % (sizeof(charset) - 1)];
+    }
+    verifier[len - 1] = '\0';
+}
+
+// Generate PKCE code_challenge from code_verifier (SHA256 hash, base64url encoded)
+static char* generate_code_challenge(const char *verifier) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256((unsigned char*)verifier, strlen(verifier), hash);
+    return base64url_encode(hash, SHA256_DIGEST_LENGTH);
+}
+
 // Add CORS headers
 static void add_cors_headers(struct MHD_Response *response) {
     if (server_config.cors_enabled) {
-        MHD_add_response_header(response, "Access-Control-Allow-Origin", "*");
+        // Restrict CORS to our domain only - prevents cross-origin scraping
+        MHD_add_response_header(response, "Access-Control-Allow-Origin", "https://weather.limani-parou.com");
         MHD_add_response_header(response, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         MHD_add_response_header(response, "Access-Control-Allow-Headers", "Content-Type, Authorization");
         MHD_add_response_header(response, "Access-Control-Allow-Credentials", "true");
@@ -86,6 +215,16 @@ static user_profile_t* get_current_profile(struct MHD_Connection *connection) {
     if (session_id) {
         user_session_t *session = session_get(session_id);
         if (session && session->is_active) {
+            // Check if token needs refresh (if we have tokens)
+            if (session->token_expires_at > 0 && session->token_expires_at < time(NULL)) {
+                printf("Access token expired for session %s, attempting refresh...\n", session_id);
+                if (!session_refresh_tokens(session_id)) {
+                    printf("Token refresh failed, session invalidated\n");
+                    session->is_active = false;
+                    return profile_get_default();
+                }
+            }
+            
             return profile_get_for_user(session->user_id);
         }
     }
@@ -203,10 +342,11 @@ static enum MHD_Result handle_profile_put(struct MHD_Connection *connection,
     return handle_profile_get(connection);
 }
 
-// Generate random state for OIDC
-static char* generate_state(void) {
+// Generate random state for OIDC with PKCE verifier
+static char* generate_state(char **code_verifier_out) {
     static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     char *state = malloc(65);
+    char *code_verifier = malloc(129);
     
     srand(time(NULL) ^ (unsigned int)getpid());
     for (int i = 0; i < 64; i++) {
@@ -214,28 +354,34 @@ static char* generate_state(void) {
     }
     state[64] = '\0';
     
-    // Store state
+    // Generate PKCE code_verifier
+    generate_code_verifier(code_verifier, 129);
+    
+    // Store state and code_verifier together
     for (int i = 0; i < MAX_PENDING_STATES; i++) {
         if (!pending_states[i].used || difftime(time(NULL), pending_states[i].created) > 600) {
             strncpy(pending_states[i].state, state, 64);
+            strncpy(pending_states[i].code_verifier, code_verifier, 128);
             pending_states[i].created = time(NULL);
             pending_states[i].used = 1;
             break;
         }
     }
     
+    *code_verifier_out = code_verifier;
     return state;
 }
 
-// Validate and consume state
-static bool validate_state(const char *state) {
+// Validate and consume state, return code_verifier
+static char* validate_and_get_verifier(const char *state) {
     for (int i = 0; i < MAX_PENDING_STATES; i++) {
         if (pending_states[i].used && strcmp(pending_states[i].state, state) == 0) {
+            char *verifier = strdup(pending_states[i].code_verifier);
             pending_states[i].used = 0;  // Consume state
-            return true;
+            return verifier;
         }
     }
-    return false;
+    return NULL;
 }
 
 // Handle /api/auth/login - Redirect to OIDC provider
@@ -248,8 +394,13 @@ static enum MHD_Result handle_oidc_login(struct MHD_Connection *connection) {
         return ret;
     }
     
-    char *state = generate_state();
-    char *auth_url = oidc_get_authorization_url(state);
+    char *code_verifier = NULL;
+    char *state = generate_state(&code_verifier);
+    char *code_challenge = generate_code_challenge(code_verifier);
+    char *auth_url = oidc_get_authorization_url(state, code_challenge);
+    
+    free(code_challenge);  // No longer needed after URL generation
+    free(code_verifier);   // Stored in pending_states array
     
     if (!auth_url) {
         free(state);
@@ -315,8 +466,9 @@ static enum MHD_Result handle_oidc_callback(struct MHD_Connection *connection) {
         return ret;
     }
     
-    // Validate state
-    if (!validate_state(state)) {
+    // Validate state and get code_verifier
+    char *code_verifier = validate_and_get_verifier(state);
+    if (!code_verifier) {
         printf("Invalid or expired state: %s\n", state);
         struct MHD_Response *response = create_error_response(400, "Invalid state");
         enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
@@ -324,8 +476,10 @@ static enum MHD_Result handle_oidc_callback(struct MHD_Connection *connection) {
         return ret;
     }
     
-    // Exchange code for tokens
-    oidc_tokens_t *tokens = oidc_exchange_code(code);
+    // Exchange code for tokens with PKCE verifier
+    oidc_tokens_t *tokens = oidc_exchange_code(code, code_verifier);
+    free(code_verifier);
+    
     if (!tokens) {
         printf("Failed to exchange code for tokens\n");
         const char *redirect = "/#/login?error=token_exchange_failed";
@@ -356,17 +510,24 @@ static enum MHD_Result handle_oidc_callback(struct MHD_Connection *connection) {
     // Create session with user ID from OIDC (sub claim)
     const char *session_id = session_create(userinfo->sub, userinfo->name ? userinfo->name : userinfo->preferred_username);
     
+    // Store OIDC tokens in session
+    session_store_tokens(session_id, 
+                        tokens->access_token, 
+                        tokens->refresh_token, 
+                        tokens->id_token, 
+                        tokens->expires_in);
+    
     oidc_free_userinfo(userinfo);
     oidc_free_tokens(tokens);
     
-    // Redirect to frontend with session cookie
+    // Redirect to frontend with session cookie (Secure flag for HTTPS)
     const char *redirect = "/";
     struct MHD_Response *response = MHD_create_response_from_buffer(
         0, "", MHD_RESPMEM_PERSISTENT);
     
-    // Set session cookie
+    // Set session cookie with Secure flag
     char cookie[256];
-    snprintf(cookie, sizeof(cookie), "session_id=%s; Path=/; HttpOnly; SameSite=Lax", session_id);
+    snprintf(cookie, sizeof(cookie), "session_id=%s; Path=/; HttpOnly; Secure; SameSite=Lax", session_id);
     MHD_add_response_header(response, "Set-Cookie", cookie);
     MHD_add_response_header(response, "Location", redirect);
     
@@ -464,6 +625,22 @@ static enum MHD_Result handle_logout(struct MHD_Connection *connection) {
 
 // Handle weather current request
 static enum MHD_Result handle_weather_current(struct MHD_Connection *connection) {
+    // Security: Rate limiting by IP address (applied to all users including guests)
+    const char *client_ip = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Forwarded-For");
+    if (!client_ip) {
+        client_ip = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Real-IP");
+    }
+    if (!client_ip) {
+        client_ip = "unknown";
+    }
+    
+    if (!check_rate_limit(client_ip)) {
+        struct MHD_Response *response = create_error_response(429, "Too many requests. Please try again later.");
+        enum MHD_Result ret = MHD_queue_response(connection, 429, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
+    
     const char *location = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "location");
     const char *aqi_str = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "include_aqi");
     
@@ -500,6 +677,22 @@ static enum MHD_Result handle_weather_current(struct MHD_Connection *connection)
 
 // Handle weather forecast request
 static enum MHD_Result handle_weather_forecast(struct MHD_Connection *connection) {
+    // Security: Rate limiting by IP address (applied to all users including guests)
+    const char *client_ip = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Forwarded-For");
+    if (!client_ip) {
+        client_ip = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Real-IP");
+    }
+    if (!client_ip) {
+        client_ip = "unknown";
+    }
+    
+    if (!check_rate_limit(client_ip)) {
+        struct MHD_Response *response = create_error_response(429, "Too many requests. Please try again later.");
+        enum MHD_Result ret = MHD_queue_response(connection, 429, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
+    
     const char *location = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "location");
     const char *days_str = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "days");
     const char *aqi_str = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "include_aqi");
@@ -772,13 +965,13 @@ int http_server_start(const server_config_t *config) {
     }
     
     // Start HTTP daemon
-    daemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY,
+    http_daemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY,
                              config->port,
                              NULL, NULL,
                              &answer_to_connection, NULL,
                              MHD_OPTION_END);
     
-    if (!daemon) {
+    if (!http_daemon) {
         fprintf(stderr, "Failed to start HTTP server on port %d\n", config->port);
         weather_client_cleanup();
         db_manager_cleanup();
@@ -796,10 +989,10 @@ int http_server_start(const server_config_t *config) {
 }
 
 void http_server_stop(void) {
-    if (daemon) {
+    if (http_daemon) {
         printf("Stopping server...\n");
-        MHD_stop_daemon(daemon);
-        daemon = NULL;
+        MHD_stop_daemon(http_daemon);
+        http_daemon = NULL;
     }
     
     weather_client_cleanup();

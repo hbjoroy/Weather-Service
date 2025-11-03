@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     libcjson-dev \
     libmicrohttpd-dev \
     libpq-dev \
+    libssl-dev \
     make \
     && rm -rf /var/lib/apt/lists/*
 
@@ -30,6 +31,7 @@ RUN apt-get update && apt-get install -y \
     libcjson1 \
     libmicrohttpd12 \
     libpq5 \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

@@ -12,6 +12,13 @@ void session_manager_cleanup(void);
 // Create a new session for a user
 const char* session_create(const char *user_id, const char *user_name);
 
+// Store OIDC tokens in session
+void session_store_tokens(const char *session_id, const char *access_token, 
+                          const char *refresh_token, const char *id_token, int expires_in);
+
+// Refresh session tokens
+bool session_refresh_tokens(const char *session_id);
+
 // Get session by session_id (from cookie)
 user_session_t* session_get(const char *session_id);
 

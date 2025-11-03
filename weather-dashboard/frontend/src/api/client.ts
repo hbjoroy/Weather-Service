@@ -27,6 +27,19 @@ class WeatherDashboardAPI {
     this.client.interceptors.response.use(
       (response) => response,
       (error: AxiosError<ErrorResponse>) => {
+        // Handle 401 Unauthorized - session expired or not logged in
+        if (error.response?.status === 401) {
+          const message = error.response.data?.error?.message || 'Authentication required'
+          throw new Error(`${message}. Please log in to continue.`)
+        }
+        
+        // Handle 429 Rate Limit
+        if (error.response?.status === 429) {
+          const message = error.response.data?.error?.message || 'Too many requests'
+          throw new Error(`${message}. Please wait a moment before trying again.`)
+        }
+        
+        // Handle other API errors
         if (error.response?.data?.error) {
           const apiError = error.response.data.error
           throw new Error(`${apiError.message} (Code: ${apiError.code})`)

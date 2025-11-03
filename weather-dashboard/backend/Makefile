@@ -4,7 +4,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g
 INCLUDES = -Iinclude -I/usr/include/postgresql
-LDFLAGS = -lcurl -lcjson -lmicrohttpd -lpq
+LDFLAGS = -lcurl -lcjson -lmicrohttpd -lpq -lssl -lcrypto
 
 # Directories
 SRCDIR = src

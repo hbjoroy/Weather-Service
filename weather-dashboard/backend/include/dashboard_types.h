@@ -9,6 +9,7 @@
 #define MAX_URL_LENGTH 512
 #define MAX_USER_ID_LENGTH 128
 #define MAX_SESSION_ID_LENGTH 64
+#define MAX_TOKEN_LENGTH 1024
 #define MAX_USERS 100
 
 // Temperature unit preferences
@@ -34,13 +35,19 @@ typedef struct {
     bool is_authenticated;
 } user_profile_t;
 
-// Session structure
+// Session structure with OIDC tokens
 typedef struct {
     char session_id[MAX_SESSION_ID_LENGTH];
     char user_id[MAX_USER_ID_LENGTH];
     time_t created_at;
     time_t last_accessed;
+    time_t expires_at;  // Session expiry
     bool is_active;
+    // OIDC tokens (empty if not using OIDC)
+    char access_token[MAX_TOKEN_LENGTH];
+    char refresh_token[MAX_TOKEN_LENGTH];
+    char id_token[MAX_TOKEN_LENGTH];
+    time_t token_expires_at;  // When access token expires
 } user_session_t;
 
 // Server configuration
