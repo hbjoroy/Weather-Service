@@ -1,14 +1,14 @@
 <template>
-  <div class="bg-white rounded-xl shadow-lg p-6">
-    <div class="flex justify-between items-center mb-6">
+  <div class="bg-white rounded-xl shadow-lg p-4 sm:p-6">
+    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3">
       <h3 class="text-lg font-semibold text-gray-900">Weather Forecast</h3>
-      <div class="flex space-x-2">
+      <div class="flex flex-wrap gap-2">
         <button
           v-for="metric in availableMetrics"
           :key="metric.key"
           @click="toggleMetric(metric.key)"
           :class="[
-            'px-3 py-1 text-sm rounded-full border transition-colors',
+            'px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-full border transition-colors whitespace-nowrap',
             visibleMetrics[metric.key]
               ? 'bg-blue-500 text-white border-blue-500'
               : 'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200'
@@ -38,13 +38,13 @@
       </div>
     </div>
     
-    <div class="mt-4 flex justify-center space-x-6 text-sm">
-      <div v-for="metric in availableMetrics" :key="metric.key" class="flex items-center space-x-2">
+    <div class="mt-4 flex flex-wrap justify-center gap-3 sm:gap-6 text-xs sm:text-sm">
+      <div v-for="metric in availableMetrics" :key="metric.key" class="flex items-center space-x-1 sm:space-x-2">
         <div 
-          :class="['w-3 h-3 rounded-full', metric.colorClass]"
+          :class="['w-3 h-3 rounded-full flex-shrink-0', metric.colorClass]"
           :style="{ backgroundColor: metric.color }"
         ></div>
-        <span class="text-gray-600">{{ metric.label }}</span>
+        <span class="text-gray-600 whitespace-nowrap">{{ metric.label }}</span>
       </div>
     </div>
   </div>

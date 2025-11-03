@@ -2,9 +2,9 @@
   <div class="space-y-6">
     <!-- Forecast Controls -->
     <div class="bg-white rounded-xl shadow-sm p-4">
-      <div class="flex flex-wrap items-center justify-between gap-4">
-        <div class="flex items-center space-x-4">
-          <label class="text-sm font-medium text-gray-700">Forecast Days:</label>
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+        <div class="flex items-center space-x-2 sm:space-x-4">
+          <label class="text-sm font-medium text-gray-700 whitespace-nowrap">Forecast Days:</label>
           <select 
             v-model="localParams.days"
             @change="updateParams"
@@ -21,7 +21,7 @@
           <button
             @click="refreshForecast"
             :disabled="loading"
-            class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+            class="w-full sm:w-auto px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
           >
             <RefreshCw :class="['w-4 h-4', loading ? 'animate-spin' : '']" />
             <span>{{ loading ? 'Loading...' : 'Refresh' }}</span>

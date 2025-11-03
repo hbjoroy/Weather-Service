@@ -4,22 +4,23 @@
     <header class="bg-white shadow-sm border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between items-center py-4">
-          <div class="flex items-center space-x-4">
-            <div class="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+          <div class="flex items-center space-x-2 sm:space-x-4 min-w-0">
+            <div class="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
               <CloudSun class="w-5 h-5 text-white" />
             </div>
-            <h1 class="text-2xl font-bold text-gray-900">Weather Dashboard</h1>
+            <h1 class="text-lg sm:text-2xl font-bold text-gray-900 truncate">Weather Dashboard</h1>
           </div>
           
           <!-- User Profile -->
-          <div class="flex items-center space-x-4">
-            <div class="text-right">
+          <div class="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
+            <div class="text-right hidden sm:block">
               <p class="text-sm font-medium text-gray-900">{{ profile.name }}</p>
               <p class="text-xs text-gray-500">{{ profile.tempUnit === 'celsius' ? 'Celsius' : 'Fahrenheit' }}</p>
             </div>
             <button 
               @click="isProfileModalVisible = true"
               class="p-2 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+              :title="profile.name"
             >
               <Settings class="w-5 h-5 text-gray-600" />
             </button>
