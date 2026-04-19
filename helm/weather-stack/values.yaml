@@ -70,6 +70,8 @@ weatherService:
     slackAppId: ""
     # Slack Signing Secret (recommended, for request verification)
     slackSigningSecret: ""
+    # Ferry schedule service base URL (cluster-internal)
+    ferryScheduleUrl: "http://ferry-schedule.ferries.svc.cluster.local:8080"
   
   # Secrets - alternative to env for sensitive data
   existingSecret: "weather-secrets"

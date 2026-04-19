@@ -109,6 +109,7 @@ int main(int argc, char *argv[]) {
     char *slack_bot_token = NULL;
     char *slack_app_id = NULL;
     char *slack_signing_secret = NULL;
+    char *ferry_schedule_url = NULL;
     int include_aqi = 0;
     int include_alerts = 0;
     int show_hourly = 0;
@@ -134,6 +135,7 @@ int main(int argc, char *argv[]) {
         {"slack",    required_argument, 0, 'S'},
         {"app-id",   required_argument, 0, 'I'},
         {"signing-secret", required_argument, 0, 'X'},
+        {"ferry-url", required_argument, 0, 'F'},
         {"url",      required_argument, 0, 'u'},
         {"timeout",  required_argument, 0, 't'},
         {"help",     no_argument,       0, 'h'},
@@ -143,7 +145,7 @@ int main(int argc, char *argv[]) {
     int option_index = 0;
     int c;
     
-    while ((c = getopt_long(argc, argv, "k:f:HaAsp:b:vCS:I:X:u:t:h", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "k:f:HaAsp:b:vCS:I:X:F:u:t:h", long_options, &option_index)) != -1) {
         switch (c) {
             case 'k':
                 api_key = optarg;
@@ -191,6 +193,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'X':
                 slack_signing_secret = optarg;
+                break;
+            case 'F':
+                ferry_schedule_url = optarg;
                 break;
             case 'u':
                 base_url = optarg;
@@ -255,6 +260,14 @@ int main(int argc, char *argv[]) {
             printf("Using Slack signing secret from SLACK_SIGNING_SECRET environment variable\n");
         }
     }
+
+    // Check for ferry schedule URL (optional, only used in server mode)
+    if (!ferry_schedule_url) {
+        ferry_schedule_url = getenv("FERRY_SCHEDULE_URL");
+        if (ferry_schedule_url && verbose) {
+            printf("Using ferry schedule URL from FERRY_SCHEDULE_URL environment variable\n");
+        }
+    }
     
     // Server mode validation
     if (server_mode) {
@@ -316,6 +329,14 @@ int main(int argc, char *argv[]) {
             server_config.slack_signing_secret[sizeof(server_config.slack_signing_secret) - 1] = '\0';
         } else {
             server_config.slack_signing_secret[0] = '\0';
+        }
+
+        // Set ferry schedule URL if provided
+        if (ferry_schedule_url) {
+            strncpy(server_config.ferry_schedule_url, ferry_schedule_url, sizeof(server_config.ferry_schedule_url) - 1);
+            server_config.ferry_schedule_url[sizeof(server_config.ferry_schedule_url) - 1] = '\0';
+        } else {
+            server_config.ferry_schedule_url[0] = '\0';
         }
         
         // Initialize and start server

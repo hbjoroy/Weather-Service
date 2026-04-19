@@ -141,6 +141,224 @@ static int contains_paros(const char *text) {
     return found;
 }
 
+/* ── Ferry schedule integration ──────────────────────────────────────────── */
+
+struct ferry_buf { char *data; size_t size; };
+
+static size_t ferry_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t n = size * nmemb;
+    struct ferry_buf *b = (struct ferry_buf *)userp;
+    char *ptr = realloc(b->data, b->size + n + 1);
+    if (!ptr) return 0;
+    b->data = ptr;
+    memcpy(b->data + b->size, contents, n);
+    b->size += n;
+    b->data[b->size] = '\0';
+    return n;
+}
+
+/**
+ * Return 1 if text contains "ferge", "fergen", or "ferga" (case-insensitive).
+ * "ferge" covers "ferge"/"fergen"; "ferga" is checked separately.
+ */
+static int contains_ferge(const char *text) {
+    if (!text) return 0;
+    size_t len = strlen(text);
+    char *lower = malloc(len + 1);
+    if (!lower) return 0;
+    for (size_t i = 0; i < len; i++) lower[i] = tolower((unsigned char)text[i]);
+    lower[len] = '\0';
+    int found = (strstr(lower, "ferge") != NULL || strstr(lower, "ferga") != NULL);
+    free(lower);
+    return found;
+}
+
+/**
+ * Look for "ferge: <query>" pattern and write the trimmed query into out[].
+ * Returns out on success, NULL if no "ferge:" colon pattern found.
+ */
+static const char *extract_vessel_query(const char *text, char *out, size_t out_size) {
+    if (!text || !out || out_size == 0) return NULL;
+    size_t len = strlen(text);
+    char *lower = malloc(len + 1);
+    if (!lower) return NULL;
+    for (size_t i = 0; i < len; i++) lower[i] = tolower((unsigned char)text[i]);
+    lower[len] = '\0';
+
+    char *pos = strstr(lower, "ferge:");
+    if (!pos) { free(lower); return NULL; }
+
+    size_t offset = (size_t)(pos - lower) + 6; /* skip "ferge:" */
+    free(lower);
+
+    const char *start = text + offset;
+    while (*start && isspace((unsigned char)*start)) start++;
+    if (!*start) return NULL;
+
+    strncpy(out, start, out_size - 1);
+    out[out_size - 1] = '\0';
+
+    /* trim trailing whitespace and sentence-ending punctuation */
+    size_t vlen = strlen(out);
+    while (vlen > 0 && (isspace((unsigned char)out[vlen-1]) ||
+                        out[vlen-1] == '?' || out[vlen-1] == '!' || out[vlen-1] == '.')) {
+        out[--vlen] = '\0';
+    }
+    return vlen > 0 ? out : NULL;
+}
+
+/**
+ * Call the ferry-schedule service and return a formatted plain-text table
+ * (heap-allocated; caller must free). Returns NULL on error.
+ * vessel_query may be NULL for the full schedule.
+ */
+static char *fetch_ferry_schedule_text(const char *vessel_query) {
+    if (!server_cfg.ferry_schedule_url[0]) return NULL;
+
+    char url[1024];
+    if (vessel_query && vessel_query[0]) {
+        /* simple percent-encode: spaces → %20, keep alphanums + safe chars */
+        char encoded[512] = {0};
+        size_t j = 0;
+        for (size_t i = 0; vessel_query[i] && j < sizeof(encoded) - 4; i++) {
+            unsigned char ch = (unsigned char)vessel_query[i];
+            if (isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+                encoded[j++] = (char)ch;
+            } else if (ch == ' ') {
+                encoded[j++] = '%'; encoded[j++] = '2'; encoded[j++] = '0';
+            } else {
+                snprintf(encoded + j, 4, "%%%02X", ch);
+                j += 3;
+            }
+        }
+        snprintf(url, sizeof(url), "%s/api/v1/schedule/paros/vessel/%s",
+                 server_cfg.ferry_schedule_url, encoded);
+    } else {
+        snprintf(url, sizeof(url), "%s/api/v1/schedule/paros",
+                 server_cfg.ferry_schedule_url);
+    }
+
+    if (server_verbose) printf("Fetching ferry schedule: %s\n", url);
+
+    struct ferry_buf resp = { malloc(1), 0 };
+    if (!resp.data) return NULL;
+    resp.data[0] = '\0';
+
+    CURL *curl = curl_easy_init();
+    if (!curl) { free(resp.data); return NULL; }
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ferry_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        fprintf(stderr, "Ferry schedule fetch failed: %s\n", curl_easy_strerror(res));
+        free(resp.data);
+        return NULL;
+    }
+
+    cJSON *root = cJSON_Parse(resp.data);
+    free(resp.data);
+    if (!root) return NULL;
+
+    /* Vessel view → { "query":…, "count":…, "calls":[…] }
+       Full schedule → plain array                            */
+    cJSON *calls = NULL;
+    int is_vessel = 0;
+    const char *matched_vessel = NULL;
+    if (cJSON_IsObject(root)) {
+        calls = cJSON_GetObjectItem(root, "calls");
+        is_vessel = 1;
+        cJSON *q = cJSON_GetObjectItem(root, "query");
+        if (q && cJSON_IsString(q)) matched_vessel = q->valuestring;
+    } else if (cJSON_IsArray(root)) {
+        calls = root;
+    }
+
+    if (!calls || !cJSON_IsArray(calls)) { cJSON_Delete(root); return NULL; }
+
+    /* Build plain-text table */
+#define TBL_SIZE 16384
+    char *tbl = malloc(TBL_SIZE);
+    if (!tbl) { cJSON_Delete(root); return NULL; }
+    int pos = 0;
+
+    if (is_vessel && matched_vessel) {
+        pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                        "Ferge: %s\n\n", matched_vessel);
+    }
+
+    /* header */
+    pos += snprintf(tbl + pos, TBL_SIZE - pos,
+        "%-5s  %-5s  %-24s  %s\n"
+        "-----  -----  ------------------------  --------\n",
+        "Avg", "Ank", "Fartøy", "Frå → Til");
+
+    int count = cJSON_GetArraySize(calls);
+    for (int i = 0; i < count && pos < TBL_SIZE - 120; i++) {
+        cJSON *item = cJSON_GetArrayItem(calls, i);
+        const char *leaving  = "-";
+        const char *arriving = "-";
+        const char *vessel   = "";
+        const char *from_p   = NULL;
+        const char *to_p     = NULL;
+        const char *r_start  = NULL;
+        const char *r_end    = NULL;
+        cJSON *j;
+
+        if ((j = cJSON_GetObjectItem(item, "leaving"))    && cJSON_IsString(j)) leaving  = j->valuestring;
+        if ((j = cJSON_GetObjectItem(item, "arriving"))   && cJSON_IsString(j)) arriving = j->valuestring;
+        if ((j = cJSON_GetObjectItem(item, "vessel"))     && cJSON_IsString(j)) vessel   = j->valuestring;
+        if ((j = cJSON_GetObjectItem(item, "from_port"))  && cJSON_IsString(j)) from_p   = j->valuestring;
+        if ((j = cJSON_GetObjectItem(item, "to_port"))    && cJSON_IsString(j)) to_p     = j->valuestring;
+        if ((j = cJSON_GetObjectItem(item, "route_start"))&& cJSON_IsString(j)) r_start  = j->valuestring;
+        if ((j = cJSON_GetObjectItem(item, "route_end"))  && cJSON_IsString(j)) r_end    = j->valuestring;
+
+        /* prefer immediate neighbour ports; fall back to route ends */
+        const char *frm = from_p ? from_p : (r_start ? r_start : "?");
+        const char *til = to_p   ? to_p   : (r_end   ? r_end   : "?");
+
+        char route[64];
+        snprintf(route, sizeof(route), "%s → %s", frm, til);
+
+        pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                        "%-5s  %-5s  %-24.24s  %s\n",
+                        leaving, arriving, vessel, route);
+    }
+
+    if (count == 0) {
+        pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                        "(ingen ferger funne)\n");
+    }
+
+    cJSON_Delete(root);
+    return tbl;
+#undef TBL_SIZE
+}
+
+/**
+ * Fetch ferry schedule and post it to Slack as a code block.
+ * vessel_query may be NULL (full schedule) or a vessel name string.
+ */
+static void handle_ferry_request(const char *channel, const char *vessel_query) {
+    char *table = fetch_ferry_schedule_text(vessel_query);
+    if (!table) {
+        send_slack_message(channel, "Beklager, kunne ikkje hente fergeruter akkurat no.");
+        return;
+    }
+
+    size_t msg_len = strlen(table) + 12;
+    char *message = malloc(msg_len);
+    if (message) {
+        snprintf(message, msg_len, "```\n%s```", table);
+        send_slack_message(channel, message);
+        free(message);
+    }
+    free(table);
+}
+
 /**
  * Handle Slack message event - check for "paros" and respond with weather
  */
@@ -887,8 +1105,16 @@ static enum MHD_Result handle_slack_events(struct MHD_Connection *connection,
                            event_subtype, channel, message_text);
                 }
                 
+                // Check for "ferge"/"fergen"/"ferga" → ferry schedule
+                if (contains_ferge(message_text)) {
+                    if (server_verbose) {
+                        printf("Message contains ferry keyword - fetching schedule\n");
+                    }
+                    char vessel_query[256] = {0};
+                    const char *vq = extract_vessel_query(message_text, vessel_query, sizeof(vessel_query));
+                    handle_ferry_request(channel, vq);
                 // Check if message contains "paros"
-                if (contains_paros(message_text)) {
+                } else if (contains_paros(message_text)) {
                     if (server_verbose) {
                         printf("Message contains 'paros' - fetching weather\n");
                     }

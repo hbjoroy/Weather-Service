@@ -199,6 +199,7 @@ typedef struct {
     char slack_bot_token[256];  // Slack Bot OAuth Token
     char slack_app_id[64];      // Slack App ID (to ignore own messages)
     char slack_signing_secret[256]; // Slack Signing Secret (for request verification)
+    char ferry_schedule_url[512]; // Ferry schedule service base URL (e.g. http://ferry-schedule.ferries.svc.cluster.local:8080)
 } server_config_t;
 
 /**
