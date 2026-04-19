@@ -263,18 +263,31 @@ static char *fetch_ferry_schedule_text(const char *vessel_query) {
     free(resp.data);
     if (!root) return NULL;
 
-    /* Vessel view → { "query":…, "count":…, "calls":[…] }
-       Full schedule → plain array                            */
+    /* ScheduleResponse: { "schedules": [...], "count":N, "date":"...", ... }
+       VesselResponse:   { "vessel":"...", "port_calls": [...], "full_route":[...], ... } */
     cJSON *calls = NULL;
     int is_vessel = 0;
-    const char *matched_vessel = NULL;
+    const char *vessel_name = NULL;
+    const char *vessel_date = NULL;
+    const char *vessel_company = NULL;
+
     if (cJSON_IsObject(root)) {
-        calls = cJSON_GetObjectItem(root, "calls");
-        is_vessel = 1;
-        cJSON *q = cJSON_GetObjectItem(root, "query");
-        if (q && cJSON_IsString(q)) matched_vessel = q->valuestring;
+        cJSON *pc = cJSON_GetObjectItem(root, "port_calls");
+        if (pc && cJSON_IsArray(pc)) {
+            /* vessel view */
+            calls = pc;
+            is_vessel = 1;
+            cJSON *j;
+            if ((j = cJSON_GetObjectItem(root, "vessel"))  && cJSON_IsString(j)) vessel_name    = j->valuestring;
+            if ((j = cJSON_GetObjectItem(root, "date"))    && cJSON_IsString(j)) vessel_date    = j->valuestring;
+            if ((j = cJSON_GetObjectItem(root, "company")) && cJSON_IsString(j)) vessel_company = j->valuestring;
+        } else {
+            /* full schedule */
+            cJSON *sc = cJSON_GetObjectItem(root, "schedules");
+            if (sc && cJSON_IsArray(sc)) calls = sc;
+        }
     } else if (cJSON_IsArray(root)) {
-        calls = root;
+        calls = root; /* fallback */
     }
 
     if (!calls || !cJSON_IsArray(calls)) { cJSON_Delete(root); return NULL; }
@@ -285,9 +298,12 @@ static char *fetch_ferry_schedule_text(const char *vessel_query) {
     if (!tbl) { cJSON_Delete(root); return NULL; }
     int pos = 0;
 
-    if (is_vessel && matched_vessel) {
+    if (is_vessel && vessel_name) {
         pos += snprintf(tbl + pos, TBL_SIZE - pos,
-                        "Ferge: %s\n\n", matched_vessel);
+                        "%s  –  %s\n%s\n\n",
+                        vessel_name,
+                        vessel_company ? vessel_company : "",
+                        vessel_date    ? vessel_date    : "");
     }
 
     /* header */
