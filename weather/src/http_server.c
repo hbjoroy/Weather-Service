@@ -299,54 +299,133 @@ static char *fetch_ferry_schedule_text(const char *vessel_query) {
     int pos = 0;
 
     if (is_vessel && vessel_name) {
+        /* ── Vessel itinerary view ────────────────────────────────────────── */
         pos += snprintf(tbl + pos, TBL_SIZE - pos,
                         "%s  –  %s\n%s\n\n",
                         vessel_name,
                         vessel_company ? vessel_company : "",
                         vessel_date    ? vessel_date    : "");
-    }
 
-    /* header */
-    pos += snprintf(tbl + pos, TBL_SIZE - pos,
-        "%-5s  %-5s  %-24s  %s\n"
-        "-----  -----  ------------------------  --------\n",
-        "Avg", "Ank", "Fartøy", "Frå → Til");
+        /* Collect Paros arr/dep times from port_calls in order */
+        int max_paros = 8;
+        const char *paros_arr[8]; const char *paros_dep[8];
+        int paros_count = 0;
+        if (calls) {
+            int n = cJSON_GetArraySize(calls);
+            for (int i = 0; i < n && paros_count < max_paros; i++) {
+                cJSON *item = cJSON_GetArrayItem(calls, i);
+                cJSON *j;
+                const char *arr = "-", *dep = "-";
+                if ((j = cJSON_GetObjectItem(item, "arriving")) && cJSON_IsString(j)) arr = j->valuestring;
+                if ((j = cJSON_GetObjectItem(item, "leaving"))  && cJSON_IsString(j)) dep = j->valuestring;
+                paros_arr[paros_count] = arr;
+                paros_dep[paros_count] = dep;
+                paros_count++;
+            }
+        }
 
-    int count = cJSON_GetArraySize(calls);
-    for (int i = 0; i < count && pos < TBL_SIZE - 120; i++) {
-        cJSON *item = cJSON_GetArrayItem(calls, i);
-        const char *leaving  = "-";
-        const char *arriving = "-";
-        const char *vessel   = "";
-        const char *from_p   = NULL;
-        const char *to_p     = NULL;
-        const char *r_start  = NULL;
-        const char *r_end    = NULL;
-        cJSON *j;
+        /* Build route table from full_route array */
+        cJSON *full_route = cJSON_GetObjectItem(root, "full_route");
+        if (full_route && cJSON_IsArray(full_route)) {
+            int nports = cJSON_GetArraySize(full_route);
 
-        if ((j = cJSON_GetObjectItem(item, "leaving"))    && cJSON_IsString(j)) leaving  = j->valuestring;
-        if ((j = cJSON_GetObjectItem(item, "arriving"))   && cJSON_IsString(j)) arriving = j->valuestring;
-        if ((j = cJSON_GetObjectItem(item, "vessel"))     && cJSON_IsString(j)) vessel   = j->valuestring;
-        if ((j = cJSON_GetObjectItem(item, "from_port"))  && cJSON_IsString(j)) from_p   = j->valuestring;
-        if ((j = cJSON_GetObjectItem(item, "to_port"))    && cJSON_IsString(j)) to_p     = j->valuestring;
-        if ((j = cJSON_GetObjectItem(item, "route_start"))&& cJSON_IsString(j)) r_start  = j->valuestring;
-        if ((j = cJSON_GetObjectItem(item, "route_end"))  && cJSON_IsString(j)) r_end    = j->valuestring;
+            /* find max port name width for alignment */
+            int w_port = 4;
+            for (int i = 0; i < nports; i++) {
+                cJSON *p = cJSON_GetArrayItem(full_route, i);
+                if (p && cJSON_IsString(p)) {
+                    int l = (int)strlen(p->valuestring);
+                    if (l > w_port) w_port = l;
+                }
+            }
+            if (w_port > 24) w_port = 24;
 
-        /* prefer immediate neighbour ports; fall back to route ends */
-        const char *frm = from_p ? from_p : (r_start ? r_start : "?");
-        const char *til = to_p   ? to_p   : (r_end   ? r_end   : "?");
+            char sep[64];
+            snprintf(sep, sizeof(sep), "%.*s", w_port + 16,
+                     "────────────────────────────────────────");
 
-        char route[64];
-        snprintf(route, sizeof(route), "%s → %s", frm, til);
+            pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                            "  %-*s  %-5s  %-5s\n  %s\n",
+                            w_port, "Havn", "Ank", "Avg", sep);
 
+            int paros_idx = 0;
+            for (int i = 0; i < nports && pos < TBL_SIZE - 80; i++) {
+                cJSON *p = cJSON_GetArrayItem(full_route, i);
+                if (!p || !cJSON_IsString(p)) continue;
+                const char *port = p->valuestring;
+
+                /* case-insensitive compare for "paros" */
+                char port_up[64] = {0};
+                for (int k = 0; port[k] && k < 63; k++)
+                    port_up[k] = (char)toupper((unsigned char)port[k]);
+
+                int is_paros = (strstr(port_up, "PAROS") != NULL);
+                const char *arr = "-", *dep = "-";
+                if (is_paros && paros_idx < paros_count) {
+                    arr = paros_arr[paros_idx];
+                    dep = paros_dep[paros_idx];
+                    paros_idx++;
+                }
+                const char *marker = is_paros ? "  ◀" : "";
+                pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                                "  %-*.*s  %-5s  %-5s%s\n",
+                                w_port, w_port, port, arr, dep, marker);
+            }
+            pos += snprintf(tbl + pos, TBL_SIZE - pos, "  %s\n", sep);
+        } else {
+            /* no full_route — fall back to simple port-call rows */
+            pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                            "  %-5s  %-5s\n  -----------\n", "Ank", "Avg");
+            if (calls) {
+                int n = cJSON_GetArraySize(calls);
+                for (int i = 0; i < n && pos < TBL_SIZE - 80; i++) {
+                    pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                                    "  %-5s  %-5s  Paros\n",
+                                    paros_arr[i], paros_dep[i]);
+                }
+            }
+        }
+    } else {
+        /* ── Full daily schedule view ─────────────────────────────────────── */
         pos += snprintf(tbl + pos, TBL_SIZE - pos,
-                        "%-5s  %-5s  %-24.24s  %s\n",
-                        leaving, arriving, vessel, route);
-    }
+            "%-5s  %-5s  %-24s  %s\n"
+            "-----  -----  ------------------------  --------\n",
+            "Avg", "Ank", "Fartøy", "Frå → Til");
 
-    if (count == 0) {
-        pos += snprintf(tbl + pos, TBL_SIZE - pos,
-                        "(ingen ferger funne)\n");
+        int count = cJSON_GetArraySize(calls);
+        for (int i = 0; i < count && pos < TBL_SIZE - 120; i++) {
+            cJSON *item = cJSON_GetArrayItem(calls, i);
+            const char *leaving  = "-";
+            const char *arriving = "-";
+            const char *vessel   = "";
+            const char *from_p   = NULL;
+            const char *to_p     = NULL;
+            const char *r_start  = NULL;
+            const char *r_end    = NULL;
+            cJSON *j;
+
+            if ((j = cJSON_GetObjectItem(item, "leaving"))    && cJSON_IsString(j)) leaving  = j->valuestring;
+            if ((j = cJSON_GetObjectItem(item, "arriving"))   && cJSON_IsString(j)) arriving = j->valuestring;
+            if ((j = cJSON_GetObjectItem(item, "vessel"))     && cJSON_IsString(j)) vessel   = j->valuestring;
+            if ((j = cJSON_GetObjectItem(item, "from_port"))  && cJSON_IsString(j)) from_p   = j->valuestring;
+            if ((j = cJSON_GetObjectItem(item, "to_port"))    && cJSON_IsString(j)) to_p     = j->valuestring;
+            if ((j = cJSON_GetObjectItem(item, "route_start"))&& cJSON_IsString(j)) r_start  = j->valuestring;
+            if ((j = cJSON_GetObjectItem(item, "route_end"))  && cJSON_IsString(j)) r_end    = j->valuestring;
+
+            const char *frm = from_p ? from_p : (r_start ? r_start : "?");
+            const char *til = to_p   ? to_p   : (r_end   ? r_end   : "?");
+
+            char route[64];
+            snprintf(route, sizeof(route), "%s → %s", frm, til);
+
+            pos += snprintf(tbl + pos, TBL_SIZE - pos,
+                            "%-5s  %-5s  %-24.24s  %s\n",
+                            leaving, arriving, vessel, route);
+        }
+
+        if (!calls || cJSON_GetArraySize(calls) == 0) {
+            pos += snprintf(tbl + pos, TBL_SIZE - pos, "(ingen ferger funne)\n");
+        }
     }
 
     cJSON_Delete(root);
@@ -396,7 +475,7 @@ static void handle_paros_weather_request(const char *channel) {
     // Format the message in Norwegian
     char message[512];
     snprintf(message, sizeof(message),
-             "På Paros er det no %.1f grader og %s, vinden er %.1f m/s, retning %s",
+             "På Paros er det no %.1f grader og %s, vinden er %.1f m/s, vind frå %s",
              response.current.temp_c,
              response.current.condition.text,
              wind_ms,
