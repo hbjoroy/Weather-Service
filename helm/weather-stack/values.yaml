@@ -18,7 +18,7 @@ weatherService:
   image:
     repository: hbjoroy/weather-service
     pullPolicy: IfNotPresent
-    tag: "1.0.10"
+    tag: "1.0.23"
   
   service:
     type: ClusterIP
