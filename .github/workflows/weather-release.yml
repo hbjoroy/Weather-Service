@@ -1,0 +1,133 @@
+name: Weather service OCI release
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/weather-release.yml"
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Full merged main commit SHA to build"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weather-release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify source and native architecture
+        id: source
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          source_sha="$(git rev-parse HEAD)"
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            test "$WORKFLOW_REF" = refs/heads/main
+            [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            test "$source_sha" = "$REQUESTED_SHA"
+            git merge-base --is-ancestor "$source_sha" origin/main
+          fi
+          printf 'sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Install native contract dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make libcurl4-openssl-dev libcjson-dev libmicrohttpd-dev libssl-dev python3-yaml python3-jsonschema
+      - name: Build service and run offline API contract
+        run: make -C weather all test-contract
+      - name: Verify ARM64 runtime Dockerfile
+        run: docker build --platform linux/arm64 --tag weather-service-contract:ci weather
+
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    needs: contract
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/hbjoroy/weather-service
+      SOURCE_SHA: ${{ needs.contract.outputs.source_sha }}
+    steps:
+      - name: Check out contract-tested source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.contract.outputs.source_sha }}
+          persist-credentials: false
+      - name: Set up native image builder
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Authenticate same-repository package publishing
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish contract-tested ARM64 service
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: weather
+          file: weather/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/hbjoroy/weather-service:sha-${{ needs.contract.outputs.source_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/hbjoroy/Weather-Service
+            org.opencontainers.image.revision=${{ needs.contract.outputs.source_sha }}
+          provenance: mode=max
+          sbom: true
+      - name: Verify published digest and save release evidence
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p release-evidence
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw > release-evidence/manifest.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          manifest = json.loads(Path("release-evidence/manifest.json").read_text())
+          platforms = [m.get("platform", {}) for m in manifest.get("manifests", [])]
+          assert any(p.get("os") == "linux" and p.get("architecture") == "arm64" for p in platforms), platforms
+          evidence = {
+              "schema": "weather-oci/v1",
+              "source_sha": os.environ["SOURCE_SHA"],
+              "image": os.environ["IMAGE"],
+              "digest": os.environ["DIGEST"],
+              "platform": "linux/arm64",
+              "run_url": f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+              "contract": "make -C weather all test-contract",
+              "package_visibility": "must be verified separately before cluster rollout",
+              "deployment_performed": False,
+          }
+          Path("release-evidence/release.json").write_text(json.dumps(evidence, indent=2) + "\n")
+          PY
+          printf 'Published `%s@%s` from `%s`. Package visibility and Helm rollout remain separate gates.\n' "$IMAGE" "$DIGEST" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: weather-release-${{ needs.contract.outputs.source_sha }}
+          path: release-evidence/
+          if-no-files-found: error
+          retention-days: 30

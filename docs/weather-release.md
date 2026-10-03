@@ -1,0 +1,11 @@
+# Weather service image publication
+
+`weather-release.yml` builds only the C service on a native GitHub-hosted ARM64 runner. Pull requests changing the workflow run the offline API contract and runtime Dockerfile build without publishing. Manual publication must run from `main` and requires a full 40-character source SHA already merged into `main`.
+
+Publication uses the same repository's short-lived `GITHUB_TOKEN` with `packages: write`; no new repository secret or dashboard build is required. The resulting image is `ghcr.io/hbjoroy/weather-service:sha-<source SHA>`. Deployment must use the verified `sha256` digest from the `weather-release-<source SHA>` artifact, which also records source, platform, workflow run and the registry manifest. Publication does not deploy or change cluster access.
+
+A new GHCR package is private by default even when its repository is public. Before cluster rollout, verify package visibility and unauthenticated digest access. Making the package public is a separate owner action; this workflow does not change visibility or create cluster credentials. Do not assume an existing Docker Hub pull secret authorizes GHCR. Public GHCR containers support anonymous pulls.
+
+The existing `weather-stack-service` Deployment in namespace `weather` is owned by Helm release `weather-stack`. Preserve its selector, existing `weather-secrets` reference, default service account, health probes, HPA, Service and ingress. The dashboard remains separate. Prefer an image-only update through that existing owner after release evidence and access are verified. Adding an Argo Deployment without a coordinated Helm ownership handoff would introduce two controllers of the same resource. The current chart's `weatherService.enabled` also controls Service/HPA/ingress/Secret resources, so turning it off is not a safe Deployment-only handoff.
+
+References: [GHCR authentication and default visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry), [GitHub image publication](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images), [native ARM64 runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
