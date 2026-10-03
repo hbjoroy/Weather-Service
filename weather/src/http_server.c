@@ -547,19 +547,16 @@ static cJSON* weather_response_to_json(const weather_response_t *response) {
  * Convert forecast_response_t to JSON
  */
 static cJSON* forecast_response_to_json(const forecast_response_t *response, int include_hourly) {
-    cJSON *json = cJSON_CreateObject();
-    
-    // Location (reuse function logic)
-    cJSON *location = cJSON_CreateObject();
-    cJSON_AddStringToObject(location, "name", response->location.name);
-    cJSON_AddStringToObject(location, "region", response->location.region);
-    cJSON_AddStringToObject(location, "country", response->location.country);
-    cJSON_AddNumberToObject(location, "lat", response->location.lat);
-    cJSON_AddNumberToObject(location, "lon", response->location.lon);
-    cJSON_AddStringToObject(location, "tz_id", response->location.tz_id);
-    cJSON_AddNumberToObject(location, "localtime_epoch", response->location.localtime_epoch);
-    cJSON_AddStringToObject(location, "localtime", response->location.localtime);
-    cJSON_AddItemToObject(json, "location", location);
+    // The upstream forecast includes the same current observation as /current.
+    weather_response_t current_response = {
+        .location = response->location,
+        .current = response->current
+    };
+    cJSON *json = weather_response_to_json(&current_response);
+    // Never present zero/default timestamps as a genuine source update.
+    if (response->current.last_updated_epoch <= 0 || response->current.last_updated[0] == '\0') {
+        cJSON_DeleteItemFromObject(json, "current");
+    }
     
     // Forecast
     cJSON *forecast_obj = cJSON_CreateObject();
@@ -636,6 +633,8 @@ static cJSON* forecast_response_to_json(const forecast_response_t *response, int
                 cJSON_AddNumberToObject(hour_obj, "cloud", hour->cloud);
                 cJSON_AddNumberToObject(hour_obj, "precip_mm", hour->precip_mm);
                 cJSON_AddNumberToObject(hour_obj, "chance_of_rain", hour->chance_of_rain);
+                cJSON_AddNumberToObject(hour_obj, "pressure_mb", hour->pressure_mb);
+                cJSON_AddNumberToObject(hour_obj, "uv", hour->uv);
                 
                 cJSON_AddItemToArray(hour_array, hour_obj);
             }
