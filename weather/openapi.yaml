@@ -454,11 +454,11 @@ components:
         last_updated_epoch:
           type: integer
           format: int64
-          description: Last update time as epoch timestamp
+          description: Provider's current observation update time as Unix seconds; not the forecast model issuance time
           example: 1761480900
         last_updated:
           type: string
-          description: Last update time string
+          description: Provider's current observation update time in the location's time zone; not the forecast model issuance time
           example: "2025-10-26 14:15"
         temp_c:
           type: number
@@ -730,6 +730,16 @@ components:
           type: integer
           description: Chance of rain percentage
           example: 15
+        pressure_mb:
+          type: number
+          format: float
+          description: Forecast pressure in millibars (equivalent to hPa) at this hour's time
+          example: 1013.0
+        uv:
+          type: number
+          format: float
+          description: Forecast UV index at this hour's time
+          example: 4.7
 
     ForecastDaily:
       type: object
@@ -759,6 +769,10 @@ components:
       properties:
         location:
           $ref: '#/components/schemas/Location'
+        current:
+          description: Current observation from the provider's forecast response, included only when its update timestamp is available. Its last_updated fields do not indicate when the forecast model was issued.
+          allOf:
+            - $ref: '#/components/schemas/CurrentWeather'
         forecast:
           type: object
           properties:

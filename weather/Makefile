@@ -14,6 +14,7 @@ OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
 
 # Target executable
 TARGET = $(BUILDDIR)/weather_service
+CONTRACT_TEST = $(BUILDDIR)/forecast_contract_test
 
 # Include directories
 INCLUDES = -I$(INCDIR)
@@ -65,6 +66,7 @@ help:
 	@echo "  debug         - Build debug version"
 	@echo "  test          - Test with London current weather (requires WEATHERAPI_KEY)"
 	@echo "  test-forecast - Test with 3-day forecast (requires WEATHERAPI_KEY)"
+	@echo "  test-contract - Offline forecast JSON/OpenAPI regression tests (Python PyYAML/jsonschema)"
 	@echo "  help          - Show this help message"
 	@echo ""
 	@echo "Environment Variables:"
@@ -102,4 +104,11 @@ test-server: $(TARGET)
 	@echo "Press Ctrl+C to stop the server"
 	./$(TARGET) -s -p 8080
 
-.PHONY: all clean deps deps-rpm run debug help test test-forecast test-server
+# Offline regression tests use the production serializers with synthetic data.
+$(CONTRACT_TEST): tests/forecast_contract_test.c src/http_server.c src/weather_api.c src/http_client.c $(wildcard include/*.h) | $(BUILDDIR)
+	$(CC) $(CFLAGS) $(INCLUDES) tests/forecast_contract_test.c src/weather_api.c src/http_client.c -o $@ $(LDFLAGS)
+
+test-contract: $(CONTRACT_TEST)
+	python3 tests/test_forecast_contract.py $(CONTRACT_TEST) openapi.yaml
+
+.PHONY: all clean deps deps-rpm run debug help test test-forecast test-server test-contract

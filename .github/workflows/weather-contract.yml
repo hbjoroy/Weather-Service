@@ -1,0 +1,28 @@
+name: Weather forecast contract
+
+on:
+  pull_request:
+    paths:
+      - "weather/**"
+      - ".github/workflows/weather-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "weather/**"
+      - ".github/workflows/weather-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install native build and contract test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make libcurl4-openssl-dev libcjson-dev libmicrohttpd-dev libssl-dev python3-yaml python3-jsonschema
+      - name: Build weather service and run offline contract tests
+        run: make -C weather all test-contract
