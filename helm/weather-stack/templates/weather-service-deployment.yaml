@@ -16,15 +16,22 @@ spec:
     metadata:
       labels:
         {{- include "weather-service.selectorLabels" . | nindent 8 }}
+      {{- if or .Values.weatherService.podAnnotations (not .Values.weatherService.existingSecret) }}
       annotations:
+        {{- with .Values.weatherService.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if not .Values.weatherService.existingSecret }}
         checksum/secret: {{ include (print $.Template.BasePath "/weather-service-secret.yaml") . | sha256sum }}
+        {{- end }}
+      {{- end }}
     spec:
       {{- include "weather-stack.imagePullSecrets" . | nindent 6 }}
       securityContext:
         {{- toYaml .Values.weatherService.securityContext | nindent 8 }}
       containers:
       - name: weather-service
-        image: "{{ .Values.global.imageRegistry }}{{ .Values.weatherService.image.repository }}:{{ .Values.weatherService.image.tag | default .Chart.AppVersion }}"
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.weatherService.image.repository }}{{ if .Values.weatherService.image.digest }}@{{ .Values.weatherService.image.digest }}{{ else }}:{{ .Values.weatherService.image.tag | default .Chart.AppVersion }}{{ end }}"
         imagePullPolicy: {{ .Values.weatherService.image.pullPolicy }}
         ports:
         - name: http

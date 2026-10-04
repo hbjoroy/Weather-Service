@@ -1,0 +1,28 @@
+name: Weather chart contract
+
+on:
+  pull_request:
+    paths:
+      - "helm/weather-stack/**"
+      - ".github/workflows/weather-chart.yml"
+  push:
+    branches: [main]
+    paths:
+      - "helm/weather-stack/**"
+      - ".github/workflows/weather-chart.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.18.6
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Verify secret-free adoption chart
+        run: python helm/weather-stack/tests/gitops_contract.py
