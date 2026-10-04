@@ -16,6 +16,10 @@ spec:
     metadata:
       labels:
         {{- include "weather-dashboard.selectorLabels" . | nindent 8 }}
+      {{- with .Values.weatherDashboard.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- include "weather-stack.imagePullSecrets" . | nindent 6 }}
       securityContext:
